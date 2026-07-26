@@ -4,8 +4,9 @@
  * Manages the firmware update lifecycle:
  *   IDLE → RECEIVING → VERIFYING → COMPLETE → (activate) → RUNNING
  *
- * Uses proto.c for frame-level protocol and info_block.c for
- * persistent state management.
+ * Uses proto.c for frame-level protocol.  Writes directly to the
+ * single application slot at APP_BASE.  No A/B partitions, no
+ * rollback — simple USART download and jump.
  *
  * Copyright (c) 2026
  * SPDX-License-Identifier: GPL-2.0
@@ -17,7 +18,6 @@
 #include "types.h"
 #include "proto.h"
 #include "uart.h"
-#include "version.h"
 
 /* ── OTA state machine states ────────────────────────────────────── */
 
@@ -36,17 +36,15 @@ enum ota_state {
  *
  * Tracks the state of an in-progress firmware update.
  * Allocated by the caller (typically on the stack of the main loop).
+ * No slot selection — always writes to APP_BASE.
  */
 struct ota_ctx {
     struct transport    *transport;     /* Bound transport (e.g., USART2) */
     enum ota_state       state;         /* Current FSM state */
-    u32                  target_slot;   /* Which slot to write to */
     u32                  image_size;    /* Total expected image size */
     u32                  bytes_written; /* Bytes written so far */
-    struct version       new_version;   /* Version of the new image */
     u16                  running_crc;   /* Running CRC-16 of the image */
     u32                  last_error;    /* Last error code */
-    bool                 ota_in_progress;
 };
 
 /* ── OTA operations ──────────────────────────────────────────────── */

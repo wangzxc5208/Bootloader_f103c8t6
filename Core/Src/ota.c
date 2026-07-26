@@ -1,14 +1,14 @@
 /*
- * ota.c - OTA update service state machine
+ * ota.c - OTA update service state machine (simplified: single slot)
  *
  * Implements the firmware update lifecycle:
  *   1. Wait for START_OTA command
- *   2. Receive firmware data chunks, write to target slot
+ *   2. Receive firmware data chunks, write to APP_BASE
  *   3. Verify CRC of written image
  *   4. Activate new image and reset
  *
- * Uses proto.c for frame I/O, flash.c for flash operations,
- * info_block.c for persistent state.
+ * Uses proto.c for frame I/O, flash.c for flash operations.
+ * No info block / persistent state — write directly to APP_BASE.
  *
  * Copyright (c) 2026
  * SPDX-License-Identifier: GPL-2.0
@@ -17,7 +17,6 @@
 #include "ota.h"
 #include "proto.h"
 #include "flash.h"
-#include "info_block.h"
 #include "boot.h"
 #include "boot_errno.h"
 #include "compiler.h"
@@ -36,13 +35,10 @@ void ota_init(struct ota_ctx *ctx, struct transport *transport)
 
     ctx->transport      = transport;
     ctx->state          = OTA_IDLE;
-    ctx->target_slot    = SLOT_INVALID;
     ctx->image_size     = 0;
     ctx->bytes_written  = 0;
     ctx->running_crc    = 0;
     ctx->last_error     = E_OK;
-    ctx->ota_in_progress = false;
-    ctx->new_version    = VERSION_ZERO;
 }
 
 /* ── OTA enter check ─────────────────────────────────────────────── */
@@ -80,34 +76,16 @@ bool ota_enter_check(struct transport *transport, u32 timeout_ms)
     return false;
 }
 
-/* ── Internal: select target slot ────────────────────────────────── */
+/* ── Internal: erase application area ────────────────────────────── */
 
-/**
- * ota_select_slot - choose which slot to write the new image to
- *
- * Always returns SLOT_A because the app is linked for 0x08004000.
- * (A/B switching requires a position-independent app or two builds.)
- *
- * Rollback is still supported: old Slot A is backed up to Slot B
- * before erasing, and restored on failure.
- */
-static u32 ota_select_slot(const struct info_block *ib)
-{
-    (void)ib;
-    return SLOT_A;  /* App is always compiled for Slot A */
-}
-
-/* ── Internal: erase target slot ─────────────────────────────────── */
-
-static int ota_erase_slot(u32 slot)
+static int ota_erase_app_area(u32 size)
 {
     struct flash_driver *drv = flash_get_default();
-    u32 addr = slot_base(slot);
 
     if (!drv)
         return E_IO;
 
-    return drv->erase(drv, addr, SLOT_A_SIZE);
+    return drv->erase(drv, APP_BASE, size);
 }
 
 /* ── Internal: handle START_OTA ──────────────────────────────────── */
@@ -123,43 +101,22 @@ static int ota_handle_start(struct ota_ctx *ctx, struct proto_frame *frame)
 
     u8 *d = frame->data;
     u32 image_size = ((u32)d[0] << 24) | ((u32)d[1] << 16) | ((u32)d[2] << 8) | d[3];
-    u16 major      = (u16)((d[4] << 8) | d[5]);
-    u16 minor      = (u16)((d[6] << 8) | d[7]);
-    u16 patch      = (u16)((d[8] << 8) | d[9]);
 
-    if (image_size == 0 || image_size > SLOT_A_SIZE)
+    if (image_size == 0 || image_size > APP_SIZE)
         return E_OTA_SIZE_EXCEED;
 
-    /* Select the non-active slot */
-    const struct info_block *ib = info_block_get();
-    ctx->target_slot = ota_select_slot(ib);
+    ctx->image_size     = image_size;
+    ctx->bytes_written  = 0;
+    ctx->running_crc    = 0;
 
-    /* Store version */
-    ctx->new_version.major = major;
-    ctx->new_version.minor = minor;
-    ctx->new_version.patch = patch;
-    ctx->image_size        = image_size;
-    ctx->bytes_written     = 0;
-    ctx->running_crc       = 0;
-
-    /* Erase the target slot */
-    ret = ota_erase_slot(ctx->target_slot);
-    if (ret != E_OK) {
-        ctx->last_error = ret;
-        return ret;
-    }
-
-    /* Prepare info block */
-    ret = info_block_prepare_update(ctx->target_slot,
-                                     &ctx->new_version,
-                                     ctx->image_size);
+    /* Erase the application area */
+    ret = ota_erase_app_area(image_size);
     if (ret != E_OK) {
         ctx->last_error = ret;
         return ret;
     }
 
     ctx->state = OTA_RECEIVING;
-    ctx->ota_in_progress = true;
 
     return E_OK;
 }
@@ -201,7 +158,7 @@ static int ota_handle_data(struct ota_ctx *ctx, struct proto_frame *frame)
     }
 
     /* Write to flash */
-    u32 target_addr = slot_base(ctx->target_slot) + offset;
+    u32 target_addr = APP_BASE + offset;
     ret = drv->write(drv, target_addr, payload, payload_len);
     if (ret < 0) {
         ctx->last_error = E_FLASH_WRITE;
@@ -235,13 +192,12 @@ static int ota_handle_verify(struct ota_ctx *ctx)
 
     /* Re-read the entire image and compute CRC */
     struct flash_driver *drv = flash_get_default();
-    u32 addr = slot_base(ctx->target_slot);
     u16 verify_crc = 0;
     u8 chunk[256];
 
     for (u32 off = 0; off < ctx->image_size; ) {
         u32 chunk_size = min((u32)sizeof(chunk), ctx->image_size - off);
-        ret = drv->read(drv, addr + off, chunk, chunk_size);
+        ret = drv->read(drv, APP_BASE + off, chunk, chunk_size);
         if (ret < 0) {
             ctx->last_error = E_IO;
             ctx->state = OTA_ERROR;
@@ -257,14 +213,6 @@ static int ota_handle_verify(struct ota_ctx *ctx)
         return E_OTA_VERIFY_FAIL;
     }
 
-    /* Commit the update */
-    ret = info_block_commit_update(ctx->target_slot, verify_crc);
-    if (ret != E_OK) {
-        ctx->last_error = ret;
-        ctx->state = OTA_ERROR;
-        return ret;
-    }
-
     ctx->state = OTA_COMPLETE;
     return E_OK;
 }
@@ -274,8 +222,8 @@ static int ota_handle_verify(struct ota_ctx *ctx)
 static void ota_handle_activate(struct ota_ctx *ctx)
 {
     (void)ctx;
-    /* Reset the MCU — bootloader will pick up the new slot on restart */
-    HAL_Delay(100);  /* Give time for ACK to be sent */
+    /* Give time for ACK to be sent, then reset */
+    HAL_Delay(100);
     NVIC_SystemReset();
 }
 
@@ -330,7 +278,7 @@ static int ota_handle_get_version(struct transport *t)
     resp.boot_minor    = 0;
     resp.boot_patch    = 0;
     resp.capabilities[0] = 0x01; /* Supports OTA */
-    resp.capabilities[1] = 0x01; /* Supports rollback */
+    resp.capabilities[1] = 0x00; /* No rollback in simplified version */
     resp.capabilities[2] = 0;
     resp.capabilities[3] = 0;
 

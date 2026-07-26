@@ -31,7 +31,6 @@ set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/flash.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/proto.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/ota.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/info_block.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/version.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/crc16.c
 )

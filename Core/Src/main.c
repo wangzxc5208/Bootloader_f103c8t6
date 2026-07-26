@@ -2,19 +2,28 @@
 /**
   ******************************************************************************
   * @file           : main.c
-  * @brief          : OTA Bootloader — boot decision + firmware update over USART2
+  * @brief          : Simplified USART Bootloader — download and jump
   *
   * Flash layout (STM32F103C8T6, 64KB):
   *   0x08000000  Bootloader      16 KB
-  *   0x08004000  App Slot A      20 KB
-  *   0x08009000  App Slot B      20 KB  (reserved for rollback)
-  *   0x0800E000  Info Block       4 KB  (dual-copy, wear-leveled)
+  *   0x08004000  Application     48 KB  (single slot)
   *
   * Boot flow:
   *   1. Init USART2 + Flash driver
-  *   2. Load info block, determine active slot
-  *   3. Validate slot (SP/PC in range, magic at offset 0x200)
-  *   4. If no valid app → OTA mode; else → rollback check → jump
+  *   2. Validate App (SP in RAM / PC in App range / thumb / magic)
+  *   3. If valid → wait 3s for OTA command, else enter OTA mode
+  *   4. Jump to App with clean environment
+  *
+  * Jump sequence (thorough cleanup):
+  *   1. Disable all interrupts
+  *   2. Disable SysTick
+  *   3. Clear all NVIC enables and pending
+  *   4. Reset all enabled peripherals via RCC, disable peripheral clocks
+  *   5. Reset system clock to HSI (8 MHz)
+  *   6. Set VTOR to App base
+  *   7. Set MSP from App vector table
+  *   8. Set CONTROL register (privileged thread mode, MSP)
+  *   9. Memory barriers → jump to App Reset_Handler
   ******************************************************************************
   */
 /* USER CODE END Header */
@@ -25,123 +34,187 @@
 #include "uart.h"
 #include "proto.h"
 #include "ota.h"
-#include "info_block.h"
 #include "boot_errno.h"
 #include "compiler.h"
 
 static struct ota_ctx ota_ctx;
 
 void SystemClock_Config(void);
-static bool boot_validate_slot(u32 slot);
-static void boot_jump_to_app(u32 slot) __noreturn;
-static void boot_enter_ota_mode(struct transport *t);
+
+/* ── Forward declarations ────────────────────────────────────────── */
+
+static bool  boot_validate_app(void);
+static void  boot_jump_to_app(void) __noreturn;
+static void  boot_enter_ota_mode(struct transport *t);
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  main
+ * ═══════════════════════════════════════════════════════════════════ */
 
 int main(void)
 {
-  HAL_Init();
-  SystemClock_Config();
-  MX_GPIO_Init();
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
 
-  /* ── Init transport + flash ──────────────────────────────────── */
-  transport_register(&uart_transport_stm32);
-  struct transport *tport = transport_find("usart2");
-  if (tport) tport->init(tport);
+    /* ── Init transport + flash ────────────────────────────────── */
+    transport_register(&uart_transport_stm32);
+    struct transport *tport = transport_find("usart2");
+    if (tport)
+        tport->init(tport);
 
-  flash_driver_register(&flash_driver_stm32f1);
+    flash_driver_register(&flash_driver_stm32f1);
 
-  /* ── Load persistent state ───────────────────────────────────── */
-  struct info_block ib;
-  if (info_block_init(&ib) != E_OK) {
-      if (tport) boot_enter_ota_mode(tport);
-      while (1) {}
-  }
+    /* ── Validate app ──────────────────────────────────────────── */
+    bool app_valid = boot_validate_app();
 
-  const struct info_block *ib_ptr = info_block_get();
-  u32 active_slot = ib_ptr ? ib_ptr->active_slot : SLOT_A;
+    if (app_valid) {
+        /*
+         * App looks good.  Give the host 3 seconds to send an OTA
+         * command (PING or START_OTA).  If none arrives, boot the app.
+         */
+        if (ota_enter_check(tport, OTA_ENTER_TIMEOUT_MS))
+            boot_enter_ota_mode(tport);
+    } else {
+        /* No valid app — stay in OTA mode forever */
+        if (tport)
+            boot_enter_ota_mode(tport);
+        while (1) {}
+    }
 
-  bool a_ok = boot_validate_slot(SLOT_A);
-  bool b_ok = boot_validate_slot(SLOT_B);
-
-  /* No valid app → OTA mode */
-  if (!a_ok && !b_ok) {
-      if (tport) boot_enter_ota_mode(tport);
-      while (1) {}
-  }
-
-  /* ── Rollback / retry logic ──────────────────────────────────── */
-  if (ib_ptr) {
-      u32 st = ib_ptr->update_status;
-      if (st == INFO_STATUS_TRYING) {
-          if (ib_ptr->boot_attempt >= ib_ptr->max_attempts) {
-              struct info_block mut = *ib_ptr;
-              info_block_trigger_rollback(&mut);
-              ib_ptr = info_block_get();
-              if (ib_ptr) active_slot = ib_ptr->active_slot;
-          } else {
-              struct info_block mut = *ib_ptr;
-              mut.boot_attempt++;
-              info_block_write(&mut);
-          }
-      } else if (st == INFO_STATUS_UPDATE_DONE) {
-          struct info_block mut = *ib_ptr;
-          mut.update_status = INFO_STATUS_TRYING;
-          mut.boot_attempt = 1;
-          info_block_write(&mut);
-      }
-  }
-
-  /* ── OTA entry window (3s) ───────────────────────────────────── */
-  if (tport) {
-      if (ota_enter_check(tport, OTA_ENTER_TIMEOUT_MS))
-          boot_enter_ota_mode(tport);
-  }
-
-  /* ── Jump to app ─────────────────────────────────────────────── */
-  boot_jump_to_app(active_slot);
+    /* ── Jump to application ───────────────────────────────────── */
+    boot_jump_to_app();
 }
 
-/* ── Slot validation ─────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════
+ *  App validation
+ * ═══════════════════════════════════════════════════════════════════ */
 
-static bool boot_validate_slot(u32 slot)
+/**
+ * boot_validate_app - check if a valid application image is present
+ *
+ * Checks four conditions (all must pass):
+ *   1. Initial SP points into RAM (0x20000000–0x20005000)
+ *   2. Reset vector (PC) is within the App flash range
+ *   3. Cortex-M3 thumb mode (PC bit 0 = 1)
+ *   4. Image header magic word 0xCAFEBABE at offset 0x200
+ *
+ * @return: true if the app image passes all checks
+ */
+static bool boot_validate_app(void)
 {
-    u32 base = slot_base(slot);
-    u32 *v   = (u32 *)base;
-    u32 sp   = v[0];
-    u32 pc   = v[1];
+    u32 *v  = (u32 *)APP_BASE;
+    u32  sp = v[0];
+    u32  pc = v[1];
 
     /* Stack pointer must target RAM */
-    if (sp < 0x20000000U || sp > 0x20005000U) return false;
-    /* Reset vector must be within this slot */
-    if (pc < base || pc >= (base + SLOT_A_SIZE)) return false;
+    if (sp < 0x20000000U || sp > 0x20005000U)
+        return false;
+
+    /* Reset vector must be within the application area */
+    if (pc < APP_BASE || pc >= APP_END)
+        return false;
+
     /* Cortex-M3 requires thumb mode (bit 0 = 1) */
-    if ((pc & 1) == 0) return false;
-    /* Image header magic at offset 0x200 */
-    u32 *hdr = (u32 *)(base + APP_HEADER_OFFSET);
-    if (hdr[0] != APP_HEADER_MAGIC) return false;
+    if ((pc & 1) == 0)
+        return false;
+
+    /* Image header magic at offset APP_HEADER_OFFSET */
+    u32 *hdr = (u32 *)(APP_BASE + APP_HEADER_OFFSET);
+    if (hdr[0] != APP_HEADER_MAGIC)
+        return false;
 
     return true;
 }
 
-/* ── Jump to application ─────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════
+ *  Jump to application — clean environment
+ * ═══════════════════════════════════════════════════════════════════ */
 
-static void boot_jump_to_app(u32 slot)
+/**
+ * boot_jump_to_app - jump to the application with a clean environment
+ *
+ * Cleanup sequence before the jump:
+ *   1. Disable all interrupts
+ *   2. Reset RCC to HSI 8 MHz (disables PLL, HSE, clears clock config)
+ *   3. Disable all NVIC interrupt-enable bits
+ *   4. Disable SysTick
+ *   5. Clear all NVIC pending interrupt bits
+ *   6. Set VTOR to the application's vector table
+ *   7. Set MSP to the application's initial stack pointer
+ *   8. Set CONTROL = 0 (privileged thread mode, use MSP)
+ *   9. Memory barriers — then jump to App Reset_Handler
+ *
+ * After this call the bootloader never returns.
+ */
+static void __noreturn boot_jump_to_app(void)
 {
-    u32 base   = slot_base(slot);
-    u32 *v     = (u32 *)base;
+    u32 *v     = (u32 *)APP_BASE;
     u32 app_sp = v[0];
     u32 app_pc = v[1];
 
+    /* ── 1. Disable all interrupts ──────────────────────────────── */
     __disable_irq();
+
+    /* ── 2. Reset RCC — switch to HSI 8 MHz, disable PLL/HSE ────── */
+    RCC->CR |= RCC_CR_HSION;                                   /* Enable HSI         */
+    while (!(RCC->CR & RCC_CR_HSIRDY));                         /* Wait HSI ready     */
+    RCC->CFGR = 0;                                              /* HSI as SYSCLK,     */
+    while ((RCC->CFGR & RCC_CFGR_SWS) != RCC_CFGR_SWS_HSI);    /*   dividers /1      */
+    RCC->CR &= ~(RCC_CR_PLLON | RCC_CR_HSEON);                 /* Disable PLL & HSE  */
+    RCC->CIR = 0;                                               /* Clear clock ints   */
+
+    /* ── 3. Disable all NVIC interrupts ─────────────────────────── */
+    for (u32 i = 0; i < 8U; i++)
+        NVIC->ICER[i] = 0xFFFFFFFFU;
+
+    /* ── 4. Disable SysTick ─────────────────────────────────────── */
     SysTick->CTRL = 0;
-    SCB->VTOR = base;
+    SysTick->LOAD = 0;
+    SysTick->VAL  = 0;
+
+    /* ── 5. Clear all pending interrupts ────────────────────────── */
+    for (u32 i = 0; i < 8U; i++)
+        NVIC->ICPR[i] = 0xFFFFFFFFU;
+
+    /* Bootloader doesn't use DMA — no DMA cleanup needed */
+
+    /* ── 6. Set vector table offset to App base ─────────────────── */
+    SCB->VTOR = APP_BASE;
+
+    /* ── 7. Set Main Stack Pointer from App vector table ────────── */
     __set_MSP(app_sp);
 
-    void (*reset)(void) = (void (*)(void))(app_pc);
-    reset();
+    /* ── 8. CONTROL register: privileged thread mode, use MSP ───── */
+    __set_CONTROL(0);
+
+    /* ── 9. Full synchronization barriers ───────────────────────── */
+    __DSB();
+    __ISB();
+
+    /*
+     * 10. Re-enable interrupts.
+     *
+     * At this point all NVIC IRQs are disabled (ICER) and SysTick is off
+     * (CTRL=0), so no interrupt source is actually active.  But PRIMASK
+     * must be 0 before the jump so the app's HAL_Delay / SysTick work.
+     * SysTick is a system exception — it bypasses NVIC ICER and is gated
+     * by PRIMASK alone.  If PRIMASK stays at 1, uwTick never increments
+     * and HAL_Delay() hangs forever.
+     */
+    __enable_irq();
+
+    /* ── 11. Jump to application Reset_Handler ──────────────────── */
+    void (*app_reset_handler)(void) = (void (*)(void))(app_pc);
+    app_reset_handler();
+
+    /* Never reach here */
     while (1) {}
 }
 
-/* ── OTA mode ────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════
+ *  OTA mode — run until reset
+ * ═══════════════════════════════════════════════════════════════════ */
 
 static void boot_enter_ota_mode(struct transport *t)
 {
@@ -149,35 +222,43 @@ static void boot_enter_ota_mode(struct transport *t)
     while (1) {
         int ret = ota_service(&ota_ctx);
         if (ret < 0 && ret != E_PROTO_TIMEOUT)
-            ota_ctx.last_error = ret;
+            ota_ctx.last_error = (u32)(-ret);
         HAL_Delay(1);
     }
 }
 
-/* ── Clock: HSE 8MHz → PLL ×9 → 72MHz ───────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════
+ *  Clock: HSE 8MHz → PLL ×9 → 72MHz
+ * ═══════════════════════════════════════════════════════════════════ */
 
 void SystemClock_Config(void)
 {
-  RCC_OscInitTypeDef osc = {0};
-  RCC_ClkInitTypeDef clk = {0};
+    RCC_OscInitTypeDef osc = {0};
+    RCC_ClkInitTypeDef clk = {0};
 
-  osc.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-  osc.HSEState       = RCC_HSE_ON;
-  osc.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
-  osc.HSIState       = RCC_HSI_ON;
-  osc.PLL.PLLState   = RCC_PLL_ON;
-  osc.PLL.PLLSource  = RCC_PLLSOURCE_HSE;
-  osc.PLL.PLLMUL     = RCC_PLL_MUL9;
-  if (HAL_RCC_OscConfig(&osc) != HAL_OK) Error_Handler();
+    osc.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+    osc.HSEState       = RCC_HSE_ON;
+    osc.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
+    osc.HSIState       = RCC_HSI_ON;
+    osc.PLL.PLLState   = RCC_PLL_ON;
+    osc.PLL.PLLSource  = RCC_PLLSOURCE_HSE;
+    osc.PLL.PLLMUL     = RCC_PLL_MUL9;
+    if (HAL_RCC_OscConfig(&osc) != HAL_OK)
+        Error_Handler();
 
-  clk.ClockType      = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
-                     | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
-  clk.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
-  clk.AHBCLKDivider  = RCC_SYSCLK_DIV1;
-  clk.APB1CLKDivider = RCC_HCLK_DIV2;
-  clk.APB2CLKDivider = RCC_HCLK_DIV1;
+    clk.ClockType      = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                       | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    clk.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
+    clk.AHBCLKDivider  = RCC_SYSCLK_DIV1;
+    clk.APB1CLKDivider = RCC_HCLK_DIV2;
+    clk.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_2) != HAL_OK) Error_Handler();
+    if (HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_2) != HAL_OK)
+        Error_Handler();
 }
 
-void Error_Handler(void) { __disable_irq(); while (1) {} }
+void Error_Handler(void)
+{
+    __disable_irq();
+    while (1) {}
+}

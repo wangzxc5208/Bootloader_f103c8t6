@@ -39,9 +39,7 @@
 #define E_FLASH_LOCK  -212      /* Flash lock/unlock failed */
 #define E_FLASH_ALIGN -213      /* Flash address not aligned */
 
-#define E_SLOT_EMPTY  -220      /* Application slot is empty */
-#define E_SLOT_INVALID -221     /* Application slot image invalid */
-#define E_SLOT_CRC    -222      /* Application slot CRC mismatch */
+#define E_APP_EMPTY   -220      /* Application slot is empty/invalid */
 
 #define E_OTA_NOT_READY    -230 /* Not in OTA mode */
 #define E_OTA_IN_PROGRESS  -231 /* OTA already in progress */
@@ -82,9 +80,7 @@ static inline const char *errno_name(int err)
     case E_FLASH_WRITE:     return "EFLASHWRITE";
     case E_FLASH_LOCK:      return "EFLASHLOCK";
     case E_FLASH_ALIGN:     return "EFLASHALIGN";
-    case E_SLOT_EMPTY:      return "ESLOTEMPTY";
-    case E_SLOT_INVALID:    return "ESLOTINVALID";
-    case E_SLOT_CRC:        return "ESLOTCRC";
+    case E_APP_EMPTY:       return "EAPPEMPTY";
     case E_OTA_NOT_READY:   return "EOTANOTREADY";
     case E_OTA_IN_PROGRESS: return "EOTAINPROGRESS";
     case E_OTA_BAD_CMD:     return "EOTABADCMD";
