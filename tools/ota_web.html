@@ -345,10 +345,13 @@ async function startDetectLoop(){
   detectRunning=true;
   log('持续检测设备…（请上电 MCU）','dim');
   while(detectRunning&&port&&port.readable){
+    ring=[]; // clear before each attempt
     let ok=await tryPing();
     if(ok){
-      let v=await tryVersion();setDev(true,v||'已连接');
-      log('✓ Bootloader '+(v||'在线'),'ok');detectRunning=false;return;
+      // Must get version too — ping alone can be false positive (echo/parasitic power)
+      let v=await tryVersion();
+      if(v){setDev(true,v);log('✓ Bootloader '+v,'ok');detectRunning=false;return;}
+      log('  Ping 通但版本获取失败, 继续检测…','warn');
     }
     await sleep(500);
   }
