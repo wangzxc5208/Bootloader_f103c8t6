@@ -323,6 +323,8 @@ function extract(){
 
 // Send a frame, then wait for a response frame.
 async function txrx(cmd,data=new Uint8Array(0),timeoutMs=2000){
+  // Discard any stale data from previous exchanges
+  ring=[];
   // Send
   let f=bf(cmd,data);
   let w=port.writable.getWriter();
@@ -332,10 +334,8 @@ async function txrx(cmd,data=new Uint8Array(0),timeoutMs=2000){
   // Receive: try pull+extract until deadline
   let dl=Date.now()+timeoutMs;
   while(Date.now()<dl){
-    // Try extract from existing ring first
     let r=extract();
     if(r)return r;
-    // Need more bytes — pull from stream (short block, loop retries)
     let ok=await pull(ring.length+1);
     if(!ok)return null;
   }
