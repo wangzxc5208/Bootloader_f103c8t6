@@ -1,6 +1,8 @@
-# STM32F103C8T6 OTA Bootloader
+# STM32F103C8T6 USART Bootloader
 
-基于 USART2 的固件升级 bootloader，支持 A/B 双分区、版本回滚。
+基于 USART2 的固件下载 bootloader。单分区设计，简单直接。
+
+> 原 A/B 分区 + 版本回滚完整版在 `legacy-ab` 分支。
 
 ## 硬件
 
@@ -25,15 +27,7 @@ STM32 GND      ──── USB-TTL GND
 0x08000000 ┌──────────────────┐
            │  Bootloader      │  16 KB  (pages 0-15)
 0x08004000 ├──────────────────┤
-           │  App Slot A      │  20 KB  (pages 16-35)  ← 主运行区
-0x08009000 ├──────────────────┤
-           │  App Slot B      │  20 KB  (pages 36-55)  ← 备份/回滚
-0x0800E000 ├──────────────────┤
-           │  Info Block A    │   2 KB  (pages 56-57)  ← 元数据
-0x0800E800 ├──────────────────┤
-           │  Info Block B    │   2 KB  (pages 58-59)  ← 元数据副本
-0x0800F000 ├──────────────────┤
-           │  Reserved        │   4 KB  (pages 60-63)
+           │  Application     │  48 KB  (pages 16-63)
 0x08010000 └──────────────────┘
 ```
 
@@ -43,33 +37,30 @@ STM32 GND      ──── USB-TTL GND
 上电
   │
   ├─ Bootloader 初始化 (USART2 + Flash 驱动)
-  ├─ 读取 Info Block → 确定 active slot
-  ├─ 校验 Slot A / Slot B (SP/PC 范围 + 魔数 0xCAFEBABE @ 0x200)
+  ├─ 校验 App (SP 在 RAM / PC 在 App 范围 / thumb bit / 魔数 0xCAFEBABE @ 0x200)
   │
-  ├─ 两个 Slot 都无效 → 进入 OTA 模式(一直等待固件)
+  ├─ App 无效 → 进入 OTA 模式（一直等待固件）
   │
-  ├─ 至少一个 Slot 有效:
-  │   ├─ STATUS_TRYING    → boot_attempt++, 超过上限则回滚
-  │   ├─ STATUS_UPDATE_DONE → 首次启动新固件, 设 TRYING
-  │   └─ STATUS_VALIDATED → 正常启动
-  │
-  ├─ 等 3 秒 OTA 命令(可在此期间连 GUI 工具进入 OTA)
-  │
-  └─ 跳转到 App
+  └─ App 有效 → 等 3 秒 OTA 命令
+       ├─ 收到 PING / START_OTA → 进入 OTA 模式
+       └─ 超时 → 跳转到 App（含完整环境清理）
 ```
 
-## 回滚机制
+## 跳转前环境清理
+
+跳转到 App 前执行完整的硬件复位，确保 App 从干净状态启动：
 
 ```
-OTA 完成 → status = UPDATE_DONE → 重启
-  │
-  ├─ Bootloader 设 status = TRYING, boot_attempt = 1
-  ├─ 跳转 App
-  │
-  ├─ App 调用 boot_mark_success() → status = VALIDATED ✓
-  │
-  └─ App 崩溃/不调 boot_mark_success():
-        boot_attempt++ → 达到 max_attempts(3) → 回滚到上一个 Slot
+1. __disable_irq()          — 关全局中断
+2. RCC 复位到 HSI 8MHz      — 关 PLL、关 HSE，切回默认时钟
+3. NVIC->ICER[0..7] 清零    — 关所有外设中断使能
+4. SysTick->CTRL = 0        — 关滴答
+5. NVIC->ICPR[0..7] 清零    — 清所有挂起中断
+6. SCB->VTOR = APP_BASE     — 设向量表偏移
+7. __set_MSP(app_sp)        — 设主栈指针
+8. __set_CONTROL(0)         — 特权线程模式 + MSP
+9. __enable_irq()           — 开中断 (源已全关，安全)
+10. DSB + ISB → 跳转
 ```
 
 ## OTA 协议
@@ -97,17 +88,9 @@ OTA 完成 → status = UPDATE_DONE → 重启
 ## 构建
 
 ```bash
-# Bootloader
-cd bootloader_f103
 cmake --preset Debug
 cmake --build build/Debug
 # 产物: build/Debug/bootloader_f103.bin (ST-Link 烧录到 0x08000000)
-
-# 测试 App
-cd bootloader_test_led
-cmake --preset Debug
-cmake --build build/Debug
-# 产物: build/Debug/bootloader_test_led.bin (OTA 升级)
 ```
 
 ## OTA 工具
@@ -129,14 +112,14 @@ python tools/ota_sender.py COM3 app.bin --version 1.0.0 --baud 9600
 
 ## App 开发规则
 
-用 CubeMX 新建 App 工程后，需改 3 处：
+用 CubeMX 新建 App 工程后，需改 2 处：
 
 ### 1. 链接脚本 (`STM32F103XX_FLASH.ld`)
 
 ```ld
-/* FLASH 起始地址改为 Slot A */
+/* FLASH 起始地址改为 App 区 */
 MEMORY {
-    FLASH (rx) : ORIGIN = 0x08004000, LENGTH = 20K
+    FLASH (rx) : ORIGIN = 0x08004000, LENGTH = 48K
 }
 
 /* 在 .isr_vector 后面加魔数段 */
@@ -154,14 +137,15 @@ SECTIONS {
 }
 ```
 
-### 2. `main()` 开头
+### 2. `main()` — 正常使用 CubeMX 生成的代码
+
+简化版 bootloader 跳转前会把时钟切回 HSI 8MHz，所以 **App 可以正常调用 `SystemClock_Config()` 配 PLL 72MHz**，不需要特殊处理。
 
 ```c
 int main(void)
 {
-    SystemCoreClockUpdate();   // ← 必须在 HAL_Init() 之前！
-    HAL_Init();
-    // SystemClock_Config();   // ← 注释掉！bootloader 已配 72MHz
+    HAL_Init();                 // SysTick HSI 8MHz
+    SystemClock_Config();       // 正常配 HSE+PLL=72MHz
     MX_GPIO_Init();
 
     while (1) {
@@ -171,30 +155,13 @@ int main(void)
 }
 ```
 
-### 3. 想用版本回滚的话
-
-```c
-extern void boot_mark_success(void);
-
-int main(void) {
-    // ... 初始化 ...
-
-    boot_mark_success();  // 告诉 bootloader 启动成功
-
-    while (1) { /* 业务逻辑 */ }
-}
-```
-
-**如果不调 `boot_mark_success()`**，bootloader 会在 3 次启动失败后自动回滚到上一个版本。
-
-## App 开发规则 (为什么)
+### App 开发规则 (为什么)
 
 | 规则 | 原因 |
 |------|------|
-| `FLASH ORIGIN = 0x08004000` | App 在 Slot A，bootloader 占 0x08000000-0x08003FFF |
-| `.image_header` + `0xCAFEBABE` | bootloader 在 `slot+0x200` 处校验魔数，没有就不启动 |
-| `SystemCoreClockUpdate()` 在 `HAL_Init` 前 | startup 设 `SystemCoreClock=8MHz`，但实际 HCLK 是 72MHz。不更新的话 SysTick 快 9 倍，`HAL_Delay` 不准 |
-| 不调 `SystemClock_Config()` | bootloader 已配好 HSE+PLL=72MHz。重复配置 PLL 会导致切换过程中的时序问题 |
+| `FLASH ORIGIN = 0x08004000` | App 起始地址，bootloader 占 0x08000000-0x08003FFF |
+| `.image_header` + `0xCAFEBABE` | bootloader 在 `app+0x200` 处校验魔数，没有就不启动 |
+| `SystemClock_Config()` 正常调用 | bootloader 跳转前已切回 HSI，App 从干净状态启动 |
 
 ## 代码风格
 
@@ -205,9 +172,15 @@ Linux 内核 C 面向对象风格：
 - `struct list_head` — 双向链表 (list_for_each_entry 等)
 - 返回值: `0` = 成功，负数 = 错误码 (E_FLASH_ERASE 等)
 
+## 分支
+
+| 分支 | 说明 |
+|------|------|
+| `main` | 简化版 (当前) — 单分区 USART 下载 |
+| `legacy-ab` | 完整版 — A/B 双分区 + 版本回滚 + Info Block 持久化 |
+
 ## 大小
 
-| 组件 | Debug (-Og) | Release (-Os) | 分区 |
-|------|-------------|---------------|------|
-| Bootloader | 11,232 B (68.6%) | ~10,500 B | 16 KB |
-| 测试 App | 6,120 B | — | 20 KB |
+| 组件 | Debug (-Og) |
+|------|-------------|
+| Bootloader | 10,176 B (62.1% of 16 KB) |
