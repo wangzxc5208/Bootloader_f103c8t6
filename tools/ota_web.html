@@ -278,7 +278,7 @@ function buildFrame(cmd,data=new Uint8Array(0)){const l=data.length,b=new Uint8A
 /* ═══════════════════════════════════════════════════════════════════
    State
    ═══════════════════════════════════════════════════════════════════ */
-let port=null,firmware=null,updating=false;
+let port=null,portReader=null,firmware=null,updating=false,reading=false;
 const $=id=>document.getElementById(id),logEl=$('log');
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -320,11 +320,15 @@ async function refreshPorts(){
 }
 async function requestPort(){try{const p=await navigator.serial.requestPort();await refreshPorts();$('selPort').selectedIndex=$('selPort').options.length-1;return p}catch(e){return null}}
 async function toggleConnect(){
-  if(port&&port.readable){try{await port.close()}catch(e){}port=null;log('已断开连接','dim');setDeviceStatus(false);setButtons();return}
+  if(port&&port.readable){
+    reading=false;
+    try{portReader&&portReader.releaseLock()}catch(e){}portReader=null;
+    try{await port.close()}catch(e){}port=null;
+    log('已断开连接','dim');setDeviceStatus(false);setButtons();return;
+  }
   let idx=parseInt($('selPort').value),sp=null;
   try{const ports=await navigator.serial.getPorts();if(isNaN(idx)||idx<0||idx>=ports.length)sp=await requestPort();else sp=ports[idx]}catch(e){sp=await requestPort()}
   if(!sp)return;
-  // Close any previous session on this port before re-opening
   try{await sp.close()}catch(e){}
   const baud=parseInt($('selBaud').value);
   try{
@@ -342,6 +346,7 @@ async function toggleConnect(){
     return;
   }
   port=sp;
+  try{portReader=port.readable.getReader()}catch(e){log('创建 reader 失败: '+e,'fail');return}
   log(`已连接 @ ${baud} baud`,'ok');setButtons();setDeviceStatus(true);await detectOnce()
 }
 function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
@@ -360,46 +365,44 @@ async function sendFrame(cmd,data=new Uint8Array(0)){const f=buildFrame(cmd,data
    reader.read() may return many bytes at once; we must not lose
    any leftover bytes when we break after finding the sync pattern.
    Never calls reader.cancel() — that closes the ReadableStream. */
+/* recvFrame — uses persistent portReader (created once at connect).
+   Mutex via `reading` flag prevents overlapping reads that would
+   lock the ReadableStream permanently. */
 async function recvFrame(timeoutMs=3000,_dbg){
-  if(!port||!port.readable)return null;
-  async function fill(ring,need,reader){
+  if(!portReader||reading)return null;
+  reading=true;
+  async function fill(ring,need){
     while(ring.length<need){
-      const{v,done}=await reader.read();
-      if(done)break;
-      if(v){for(let b of v)ring.push(b);if(_dbg)console.log('recvFrame read',v.length,'bytes, ring now',ring.length)}
+      const{v,done}=await portReader.read();
+      if(done)return false;
+      if(v){for(let b of v)ring.push(b);if(_dbg)console.log('recvFrame read '+v.length+'B, ring '+ring.length)}
     }
+    return true;
   }
-  let reader,ring=[],loops=0;
+  let ring=[],loops=0;
   try{
-    reader=port.readable.getReader();
     while(true){
-      if(++loops>50)return null; // safety valve
+      if(++loops>50){reading=false;return null;}
       let si=-1;
       for(let i=0;i<ring.length-1;i++){if(ring[i]===SYNC0&&ring[i+1]===SYNC1){si=i;break}}
       if(si<0){
-        if(ring.length>1)ring=ring.slice(-1); // keep last byte only (maybe AA)
-        await fill(ring,2,reader);
-        if(_dbg)console.log('recvFrame scan: ring',ring.length>=2?'['+ring[0].toString(16)+','+ring[1].toString(16)+'...]':'['+ring+']');
+        if(ring.length>1)ring=ring.slice(-1);
+        const ok=await fill(ring,2);if(!ok){reading=false;return null}
         continue;
       }
       ring=ring.slice(si);
-      await fill(ring,5,reader);
-      if(ring.length<5)return null;
+      if(!(await fill(ring,5))){reading=false;return null}
       const cmd=ring[2],plen=(ring[3]<<8)|ring[4];
-      if(_dbg)console.log('recvFrame got sync, cmd='+cmd.toString(16),'plen='+plen);
       if(plen>MAX_PAYLOAD){ring=ring.slice(5);continue;}
       const total=5+plen+2;
-      await fill(ring,total,reader);
-      if(ring.length<total)return null;
+      if(!(await fill(ring,total))){reading=false;return null}
       const frameBytes=ring.slice(2,5+plen);
       const crcRx=(ring[5+plen]<<8)|ring[5+plen+1];
-      if(crc16(frameBytes)!==crcRx){if(_dbg)console.log('CRC mismatch');ring=ring.slice(2);continue;}
-      const payload=ring.slice(5,5+plen);
-      return{cmd,payload:new Uint8Array(payload)};
+      if(crc16(frameBytes)!==crcRx){ring=ring.slice(2);continue;}
+      reading=false;
+      return{cmd,payload:new Uint8Array(ring.slice(5,5+plen))};
     }
-  }finally{
-    try{reader&&reader.releaseLock()}catch(e){}
-  }
+  }catch(e){reading=false;return null}
 }
 
 async function sendCmd(cmd,data,ack=true){await sendFrame(cmd,data);if(!ack)return true;const r=await recvFrame(3000);return r&&r.cmd===RESP_ACK}
@@ -460,7 +463,7 @@ async function doUpdate(){
 async function init(){if(!('serial' in navigator)){log('✗ 浏览器不支持 Web Serial API — 请用 Chrome/Edge','fail');return}
   $('btnRefresh').disabled=false;$('btnConnect').disabled=false;await refreshPorts();
   navigator.serial.addEventListener('connect',()=>{refreshPorts();log('检测到新串口','dim')});
-  navigator.serial.addEventListener('disconnect',()=>{log('串口已断开','warn');port=null;setDeviceStatus(false);setButtons()})}
+  navigator.serial.addEventListener('disconnect',()=>{log('串口已断开','warn');reading=false;try{portReader&&portReader.releaseLock()}catch(e){}portReader=null;port=null;setDeviceStatus(false);setButtons()})}
 init();
 </script>
 </body>
