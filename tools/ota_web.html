@@ -410,10 +410,17 @@ async function doUpdate(){
 
     // 5. Activate
     stepOn(4,'act');log('→ 激活…','dim');setProg(100,'激活中…');
-    let f=bf(CA);let w=port.writable.getWriter();await w.write(f);await sleep(50);try{w.releaseLock()}catch(e){}
-    await sleep(300);
+    // Use txrx for reliable send — MCU sends ACK then resets, response may not arrive
+    try{await txrx(CA,new Uint8Array(0),2000)}catch(e){}
     log('');log('═'.repeat(40),'ok');log('  ✓ 升级完成！设备正在重启…','ok');log('  新版本 v'+m0+'.'+m1+'.'+m2,'ok');log('═'.repeat(40),'ok');
     stepOn(4,'done');setProg(100,'完成 ✓');
+
+    // Close port so no stray data hits MCU during next boot's OTA window
+    await sleep(200);
+    if(reader){try{reader.cancel()}catch(e){}reader=null}
+    try{await port.close()}catch(e){}port=null;ring=[];
+    log('串口已关闭 (避免干扰 MCU 重启)','dim');
+    setDev(false);setBtns();
   }catch(e){log('异常: '+e,'fail')}
   finally{updating=false;$('bStart').innerHTML='⬆ 开始升级';setBtns()}
 }
