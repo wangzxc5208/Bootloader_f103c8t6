@@ -356,51 +356,46 @@ function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
 
 async function sendFrame(cmd,data=new Uint8Array(0)){const f=buildFrame(cmd,data),w=port.writable.getWriter();try{await w.write(f)}finally{w.releaseLock()}}
 
-/* recvFrame — blocking read.  MCU responds in ~20ms when online so
-   reader.read() returns fast.  Sync detection skips any noise bytes.
-   Never calls reader.cancel() — that closes the whole ReadableStream. */
+/* recvFrame — collect bytes into a ring buffer, then parse.
+   reader.read() may return many bytes at once; we must not lose
+   any leftover bytes when we break after finding the sync pattern.
+   Never calls reader.cancel() — that closes the ReadableStream. */
 async function recvFrame(timeoutMs=3000){
   if(!port||!port.readable)return null;
-  let reader,buf=[];
-  try{
-    reader=port.readable.getReader();
-    // Phase 1: scan for sync bytes AA 55
-    while(buf.length<2){
-      const{v,done}=await reader.read();
-      if(done)return null;
-      if(!v)continue;
-      for(let b of v){
-        if(buf.length===0&&b===SYNC0)buf.push(b);
-        else if(buf.length===1){
-          if(b===SYNC1){buf.push(b);break}
-          else if(b===SYNC0)buf=[b];
-          else buf=[];
-        }
-      }
-    }
-    // Phase 2: read header (cmd + len_hi + len_lo = 3 bytes)
-    for(let i=0;i<3;i++){
-      const{v,done}=await reader.read();
-      if(done)return null;
-      if(v)for(let b of v){buf.push(b);if(buf.length>=5)break}
-    }
-    if(buf.length<5)return null;
-    const cmd=buf[2],plen=(buf[3]<<8)|buf[4];
-    if(plen>MAX_PAYLOAD)return null;
-    // Phase 3: read payload + CRC
-    let tail=[],need=plen+2;
-    while(tail.length<need){
+  // helper: pull more bytes into the ring buffer
+  async function fill(ring,need,reader){
+    while(ring.length<need){
       const{v,done}=await reader.read();
       if(done)break;
-      if(v)for(let b of v){tail.push(b);if(tail.length>=need)break}
+      if(v)for(let b of v)ring.push(b);
     }
-    if(tail.length<need)return null;
-    buf=buf.concat(tail);
-    // Verify CRC (over cmd+len+payload, big-endian CRC at end)
-    const crcRx=(buf[buf.length-2]<<8)|buf[buf.length-1];
-    const payload=buf.slice(5,5+plen);
-    if(crc16(buf.slice(2,5+plen))!==crcRx)return null;
-    return{cmd,payload:new Uint8Array(payload)};
+  }
+  let reader,ring=[];
+  try{
+    reader=port.readable.getReader();
+    while(true){
+      // scan ring for AA 55 sync
+      let si=-1;
+      for(let i=0;i<ring.length-1;i++){if(ring[i]===SYNC0&&ring[i+1]===SYNC1){si=i;break}}
+      if(si<0){ring=ring.slice(-1);await fill(ring,2,reader);continue} // keep only last byte (might be AA)
+      // discard garbage before sync
+      ring=ring.slice(si);
+      // ensure we have header (5 bytes total = 2 sync + 3 hdr)
+      await fill(ring,5,reader);
+      if(ring.length<5)return null;
+      const cmd=ring[2],plen=(ring[3]<<8)|ring[4];
+      if(plen>MAX_PAYLOAD){ring=ring.slice(5);continue;} // bad length, skip this frame
+      // ensure we have full payload + CRC
+      const total=5+plen+2;
+      await fill(ring,total,reader);
+      if(ring.length<total)return null;
+      // verify CRC
+      const frameBytes=ring.slice(2,5+plen);
+      const crcRx=(ring[5+plen]<<8)|ring[5+plen+1];
+      if(crc16(frameBytes)!==crcRx){ring=ring.slice(2);continue;} // CRC mismatch, scan again
+      const payload=ring.slice(5,5+plen);
+      return{cmd,payload:new Uint8Array(payload)};
+    }
   }finally{
     try{reader&&reader.releaseLock()}catch(e){}
   }
