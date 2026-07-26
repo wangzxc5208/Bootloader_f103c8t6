@@ -113,15 +113,20 @@ static int ota_erase_slot(u32 slot)
 
 static int ota_handle_start(struct ota_ctx *ctx, struct proto_frame *frame)
 {
-    struct proto_start_ota *req;
     int ret;
 
-    if (frame->len < sizeof(struct proto_start_ota))
+    /* Payload is big-endian on the wire — parse byte-by-byte.
+     * Minimum 12 bytes: image_size(4) + major(2) + minor(2) + patch(2) + reserved(2) */
+    if (frame->len < 12)
         return E_BAD_LENGTH;
 
-    req = (struct proto_start_ota *)frame->data;
+    u8 *d = frame->data;
+    u32 image_size = ((u32)d[0] << 24) | ((u32)d[1] << 16) | ((u32)d[2] << 8) | d[3];
+    u16 major      = (u16)((d[4] << 8) | d[5]);
+    u16 minor      = (u16)((d[6] << 8) | d[7]);
+    u16 patch      = (u16)((d[8] << 8) | d[9]);
 
-    if (req->image_size == 0 || req->image_size > SLOT_A_SIZE)
+    if (image_size == 0 || image_size > SLOT_A_SIZE)
         return E_OTA_SIZE_EXCEED;
 
     /* Select the non-active slot */
@@ -129,10 +134,10 @@ static int ota_handle_start(struct ota_ctx *ctx, struct proto_frame *frame)
     ctx->target_slot = ota_select_slot(ib);
 
     /* Store version */
-    ctx->new_version.major = req->major;
-    ctx->new_version.minor = req->minor;
-    ctx->new_version.patch = req->patch;
-    ctx->image_size        = req->image_size;
+    ctx->new_version.major = major;
+    ctx->new_version.minor = minor;
+    ctx->new_version.patch = patch;
+    ctx->image_size        = image_size;
     ctx->bytes_written     = 0;
     ctx->running_crc       = 0;
 
