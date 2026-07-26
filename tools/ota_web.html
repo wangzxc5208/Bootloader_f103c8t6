@@ -5,478 +5,428 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>STM32F103 OTA 固件升级</title>
 <style>
-/* ═════════════════════════════════════════════════════════════════ */
-/* Design tokens                                                     */
-/* ═════════════════════════════════════════════════════════════════ */
 :root {
-  --bg:        #090b10;
-  --surface:   #11141d;
-  --surface2:  #181c27;
-  --border:    #1e2330;
-  --border-hi: #2a3040;
-  --text:      #e4e6ed;
-  --text-dim:  #7b8090;
-  --text-mid:  #9ca0b0;
-  --primary:   #4f8fff;
-  --primary-dim:#1d3558;
-  --primary-glow: rgba(79,143,255,0.12);
-  --ok:        #34d399;
-  --ok-dim:    #0f3c2e;
-  --warn:      #fbbf24;
-  --warn-dim:  #3d2e0f;
-  --fail:      #f87171;
-  --fail-dim:  #3d1515;
-  --radius:    10px;
-  --radius-sm: 6px;
-  --font:      -apple-system, "Microsoft YaHei UI", "PingFang SC", sans-serif;
-  --mono:      "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
+  --bg:#090b10; --surface:#11141d; --surface2:#181c27;
+  --border:#1e2330; --border-hi:#2a3040;
+  --text:#e4e6ed; --dim:#7b8090; --mid:#9ca0b0;
+  --pri:#4f8fff; --pri-dim:#1d3558; --pri-glow:rgba(79,143,255,0.12);
+  --ok:#34d399; --ok-dim:#0f3c2e;
+  --warn:#fbbf24; --warn-dim:#3d2e0f;
+  --fail:#f87171; --fail-dim:#3d1515;
 }
-* { box-sizing:border-box; margin:0; padding:0; }
-html { background:var(--bg); }
-body {
-  font-family:var(--font); background:var(--bg); color:var(--text);
-  display:flex; justify-content:center; padding:28px 16px 40px;
-  min-height:100vh; line-height:1.5; -webkit-font-smoothing:antialiased;
-}
-.container { width:100%; max-width:780px; display:flex; flex-direction:column; gap:16px; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Microsoft YaHei UI",sans-serif;background:var(--bg);color:var(--text);display:flex;justify-content:center;padding:24px 16px 40px;min-height:100vh;line-height:1.5}
+.c{width:100%;max-width:780px;display:flex;flex-direction:column;gap:14px}
 
-/* ── Header ───────────────────────────────────────────────────── */
-.header { text-align:center; padding:6px 0 2px; }
-.header h1 { font-size:24px; font-weight:700; letter-spacing:-0.3px; }
-.header .sub { font-size:13px; color:var(--text-dim); margin-top:4px; }
-.header .sub span { color:var(--primary); }
+/* header */
+.hdr{text-align:center;padding:4px 0}
+.hdr h1{font-size:24px;font-weight:700}
+.hdr p{font-size:13px;color:var(--dim);margin-top:2px}
+.hdr span{color:var(--pri)}
 
-/* ── Cards ─────────────────────────────────────────────────────── */
-.card {
-  background:var(--surface); border:1px solid var(--border);
-  border-radius:var(--radius); padding:18px 22px;
-  transition:border-color 0.2s;
-}
-.card-head {
-  display:flex; align-items:center; gap:8px; margin-bottom:12px;
-  font-size:11px; font-weight:700; color:var(--text-dim);
-  text-transform:uppercase; letter-spacing:1.2px;
-}
-.card-head .dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
-.dot-off    { background:#4b5563; }
-.dot-ok     { background:var(--ok); box-shadow:0 0 6px var(--ok); }
-.dot-warn   { background:var(--warn); box-shadow:0 0 6px var(--warn); }
-.dot-active { background:var(--primary); box-shadow:0 0 6px var(--primary); }
+/* card */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 20px}
+.chd{display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:11px;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:1px}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dot-off{background:#4b5563}.dot-ok{background:var(--ok);box-shadow:0 0 6px var(--ok)}.dot-warn{background:var(--warn)}
 
-/* ── Form controls ─────────────────────────────────────────────── */
-select, input[type=text], input[type=number] {
-  font-family:var(--font); font-size:14px;
-  background:var(--surface2); color:var(--text);
-  border:1px solid var(--border); border-radius:var(--radius-sm);
-  padding:9px 12px; outline:none; transition:border-color 0.15s;
-}
-select:focus, input:focus { border-color:var(--primary); }
-select { cursor:pointer; appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237b8090'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 10px center; padding-right:28px; }
+/* controls */
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.f1{flex:1;min-width:0}
+select,input{font-family:inherit;font-size:14px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:9px 12px;outline:none}select:focus,input:focus{border-color:var(--pri)}
+select{cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237b8090'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:28px}
 
-.row { display:flex; gap:8px; align-items:center; }
-.row-wrap { flex-wrap:wrap; }
-.flex-1 { flex:1; min-width:0; }
+/* buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;font-family:inherit;font-size:13px;font-weight:600;padding:8px 14px;border-radius:6px;border:none;cursor:pointer;transition:all 0.15s;white-space:nowrap;letter-spacing:.2px}
+.btn:disabled{opacity:.35;cursor:not-allowed;pointer-events:none}
+.btn-sm{font-size:11px;padding:5px 10px}
+.btn-pri{background:var(--pri);color:#fff}
+.btn-pri:hover:not(:disabled){background:#3b7de6;box-shadow:0 0 16px var(--pri-glow)}
+.btn-out{background:transparent;border:1px solid var(--border-hi);color:var(--mid)}
+.btn-out:hover:not(:disabled){border-color:var(--pri);color:var(--pri)}
+.btn-ok{background:var(--ok-dim);color:var(--ok);border:1px solid #1a5c40}
+.btn-ghost{background:transparent;border:1px solid transparent;color:var(--dim);padding:6px 10px}
+.btn-ghost:hover:not(:disabled){color:var(--text);background:var(--surface2)}
 
-/* ── Buttons ────────────────────────────────────────────────────── */
-.btn {
-  display:inline-flex; align-items:center; justify-content:center; gap:5px;
-  font-family:var(--font); font-size:13px; font-weight:600;
-  padding:8px 14px; border-radius:var(--radius-sm); border:none;
-  cursor:pointer; transition:all 0.15s; white-space:nowrap;
-  letter-spacing:0.2px;
-}
-.btn:disabled { opacity:0.35; cursor:not-allowed; pointer-events:none; }
-.btn-sm { font-size:11px; padding:5px 10px; }
+/* badge */
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:4px 10px;border-radius:20px}
+.badge-off{background:var(--surface2);color:var(--dim)}
+.badge-ok{background:var(--ok-dim);color:var(--ok)}
+.badge-warn{background:var(--warn-dim);color:var(--warn)}
 
-.btn-primary { background:var(--primary); color:#fff; }
-.btn-primary:hover:not(:disabled) { background:#3b7de6; box-shadow:0 0 16px var(--primary-glow); }
+/* file zone */
+.fz{border:2px dashed var(--border-hi);border-radius:10px;padding:24px 20px;text-align:center;cursor:pointer;transition:all .2s}
+.fz:hover,.fz.drag{border-color:var(--pri);background:var(--pri-glow)}
+.fz .fic{font-size:32px;margin-bottom:6px;opacity:.6}
+.fz .fh{font-size:14px;color:var(--dim)}
+.fz .fn{font-size:14px;color:var(--text);font-weight:600;margin-top:4px;word-break:break-all}
+.fz.has{border-style:solid;border-color:var(--border-hi);background:var(--surface2)}
 
-.btn-outline { background:transparent; border:1px solid var(--border-hi); color:var(--text-mid); }
-.btn-outline:hover:not(:disabled) { border-color:var(--primary); color:var(--primary); }
+/* version */
+.ver{display:flex;gap:3px;align-items:center}
+.ver input{width:44px;text-align:center;font-weight:600;font-size:14px;padding:6px 4px}
+.ver .sep{color:var(--dim);font-weight:700;font-size:14px}
 
-.btn-ok { background:var(--ok-dim); color:var(--ok); border:1px solid #1a5c40; }
-.btn-ok:hover:not(:disabled) { background:#145036; }
+/* progress */
+.prog-wrap{display:none}
+.prog-wrap.on{display:block}
+.steps{display:flex;gap:6px;margin-bottom:8px}
+.step{flex:1;text-align:center;padding:6px 4px;border-radius:6px;font-size:10px;font-weight:700;color:var(--dim);background:var(--surface2);transition:all .3s}
+.step.done{background:var(--ok-dim);color:var(--ok)}
+.step.act{background:var(--pri-dim);color:var(--pri)}
+.step.err{background:var(--fail-dim);color:var(--fail)}
+.ptrack{height:6px;background:var(--surface2);border-radius:3px;overflow:hidden;margin:6px 0}
+.pfill{height:100%;background:linear-gradient(90deg,var(--pri),#6aa8ff);border-radius:3px;width:0%;transition:width .2s}
+.pinfo{display:flex;justify-content:space-between;font-size:11px;color:var(--dim)}
 
-.btn-danger { background:var(--fail-dim); color:var(--fail); border:1px solid #5c2020; }
+/* log */
+.log{background:var(--bg);border:1px solid var(--border);border-radius:10px;height:260px;overflow-y:auto;padding:12px 14px;font-family:"Cascadia Code",Consolas,monospace;font-size:12px;line-height:1.7}
+.log .L{white-space:pre-wrap;word-break:break-all}
+.log .c-ok{color:var(--ok)}.log .c-fail{color:var(--fail)}.log .c-warn{color:var(--warn)}.log .c-dim{color:var(--dim)}.log .c-info{color:var(--pri)}
 
-.btn-ghost { background:transparent; border:1px solid transparent; color:var(--text-dim); padding:6px 10px; }
-.btn-ghost:hover:not(:disabled) { color:var(--text); background:var(--surface2); }
-
-/* ── Status badge ───────────────────────────────────────────────── */
-.status-badge {
-  display:inline-flex; align-items:center; gap:5px;
-  font-size:12px; font-weight:600; padding:4px 10px;
-  border-radius:20px; letter-spacing:0.3px;
-}
-.status-off    { background:var(--surface2); color:var(--text-dim); }
-.status-ok     { background:var(--ok-dim);  color:var(--ok); }
-.status-warn   { background:var(--warn-dim); color:var(--warn); }
-
-/* ── File drop zone ─────────────────────────────────────────────── */
-.file-zone {
-  border:2px dashed var(--border-hi); border-radius:var(--radius);
-  padding:28px 20px; text-align:center; cursor:pointer;
-  transition:all 0.2s; position:relative; overflow:hidden;
-}
-.file-zone:hover, .file-zone.drag-over {
-  border-color:var(--primary); background:var(--primary-glow);
-}
-.file-zone .icon { font-size:32px; margin-bottom:8px; opacity:0.6; }
-.file-zone .hint { font-size:14px; color:var(--text-dim); }
-.file-zone .name { font-size:14px; color:var(--text); font-weight:600; margin-top:6px; word-break:break-all; }
-.file-zone.has-file { border-style:solid; border-color:var(--border-hi); background:var(--surface2); }
-
-/* ── Version inputs ─────────────────────────────────────────────── */
-.ver-group { display:flex; gap:3px; align-items:center; }
-.ver-group input {
-  width:44px; text-align:center; font-weight:600; font-size:14px;
-  padding:6px 4px;
-}
-.ver-group .sep { color:var(--text-dim); font-weight:700; font-size:14px; }
-
-/* ── Progress ───────────────────────────────────────────────────── */
-.progress-section { display:none; }
-.progress-section.active { display:block; }
-.progress-track {
-  height:6px; background:var(--surface2); border-radius:3px;
-  overflow:hidden; margin:6px 0;
-}
-.progress-fill {
-  height:100%; background:linear-gradient(90deg, var(--primary), #6aa8ff);
-  border-radius:3px; width:0%; transition:width 0.2s;
-}
-.progress-info { display:flex; justify-content:space-between; font-size:11px; color:var(--text-dim); }
-.progress-steps { display:flex; gap:6px; margin-bottom:8px; }
-.step {
-  flex:1; text-align:center; padding:6px 4px; border-radius:var(--radius-sm);
-  font-size:10px; font-weight:700; color:var(--text-dim);
-  background:var(--surface2); transition:all 0.3s;
-}
-.step.done    { background:var(--ok-dim); color:var(--ok); }
-.step.active  { background:var(--primary-dim); color:var(--primary); }
-.step.error   { background:var(--fail-dim); color:var(--fail); }
-
-/* ── Log ────────────────────────────────────────────────────────── */
-.log-wrap {
-  background:var(--bg); border-radius:var(--radius);
-  height:260px; overflow-y:auto; padding:12px 14px;
-  font-family:var(--mono); font-size:12px; line-height:1.7;
-  border:1px solid var(--border);
-}
-.log-wrap .line { white-space:pre-wrap; word-break:break-all; }
-.log-wrap .c-ok   { color:var(--ok); }
-.log-wrap .c-fail { color:var(--fail); }
-.log-wrap .c-warn { color:var(--warn); }
-.log-wrap .c-dim  { color:var(--text-dim); }
-.log-wrap .c-info { color:var(--primary); }
-
-/* ── Footer ─────────────────────────────────────────────────────── */
-.footer { text-align:center; font-size:11px; color:var(--text-dim); padding:4px 0; }
-
-/* ── Animations ─────────────────────────────────────────────────── */
-@keyframes spin { to { transform:rotate(360deg); } }
-.spinner { display:inline-block; width:14px; height:14px; border:2px solid rgba(255,255,255,0.2); border-top-color:#fff; border-radius:50%; animation:spin 0.6s linear infinite; }
-@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
-.pulse { animation:pulse 1.5s ease-in-out infinite; }
+/* misc */
+.footer{text-align:center;font-size:11px;color:var(--dim);padding:4px 0}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.2);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite}
 </style>
 </head>
 <body>
-<div class="container">
-
-  <!-- ═══════════ Header ═══════════ -->
-  <div class="header">
+<div class="c">
+  <div class="hdr">
     <h1>STM32F103 OTA 固件升级</h1>
-    <p class="sub">通过 <span>Web Serial API</span> 连接设备 · Chrome / Edge 浏览器</p>
+    <p>通过 <span>Web Serial API</span> 连接设备 · Chrome / Edge 浏览器</p>
   </div>
 
-  <!-- ═══════════ Connection ═══════════ -->
+  <!-- Connect -->
   <div class="card">
-    <div class="card-head"><span class="dot" id="connDot"></span> 串口连接</div>
-    <div class="row row-wrap">
-      <button class="btn btn-ghost btn-sm" id="btnRefresh" onclick="refreshPorts()" disabled title="刷新串口列表">↻</button>
-      <select class="flex-1" id="selPort"><option value="">— 选择串口 —</option></select>
-      <select id="selBaud" style="width:90px;">
-        <option value="9600">9600</option><option value="19200">19200</option>
-        <option value="57600">57600</option><option value="115200">115200</option>
-      </select>
-      <button class="btn btn-outline" id="btnConnect" onclick="toggleConnect()" disabled>连接</button>
+    <div class="chd"><span class="dot dot-off" id="dCon"></span> 串口连接</div>
+    <div class="row">
+      <button class="btn btn-ghost btn-sm" id="bRef" onclick="refreshPorts()" disabled>↻</button>
+      <select class="f1" id="sPort"><option value="">— 选择串口 —</option></select>
+      <select id="sBaud" style="width:90px"><option value="9600">9600</option><option value="19200">19200</option><option value="57600">57600</option><option value="115200">115200</option></select>
+      <button class="btn btn-out" id="bCon" onclick="toggleConnect()" disabled>连接</button>
     </div>
-    <div style="margin-top:8px; display:flex; align-items:center; gap:8px; min-height:22px;">
-      <span class="status-badge status-off" id="devStatus">未连接</span>
-      <span id="devInfo" style="font-size:11px; color:var(--text-dim);"></span>
-      <span style="flex:1;"></span>
-      <button class="btn btn-ghost btn-sm" id="btnDetect" onclick="doDetect()" disabled>重新检测</button>
-      <button class="btn btn-ghost btn-sm" id="btnPing" onclick="doPing()" disabled>Ping</button>
-      <button class="btn btn-ghost btn-sm" id="btnReset" onclick="doReset()" disabled>复位</button>
+    <div class="row" style="margin-top:8px;min-height:22px">
+      <span class="badge badge-off" id="bDev">未连接</span>
+      <span id="sInfo" style="font-size:11px;color:var(--dim)"></span>
+      <span style="flex:1"></span>
+      <button class="btn btn-ghost btn-sm" id="bDet" onclick="doDetect()" disabled>重新检测</button>
+      <button class="btn btn-ghost btn-sm" id="bPing" onclick="doPing()" disabled>Ping</button>
+      <button class="btn btn-ghost btn-sm" id="bRst" onclick="doReset()" disabled>复位</button>
     </div>
   </div>
 
-  <!-- ═══════════ Firmware ═══════════ -->
+  <!-- Firmware -->
   <div class="card">
-    <div class="card-head"><span class="dot dot-off" id="fwDot"></span> 固件</div>
-    <div class="file-zone" id="fileZone" onclick="pickFile()">
-      <div class="icon">📦</div>
-      <div class="hint">点击选择或拖放 .bin 固件文件</div>
-      <div class="name" id="fileName"></div>
+    <div class="chd"><span class="dot dot-off" id="dFw"></span> 固件</div>
+    <div class="fz" id="fz" onclick="pickFile()">
+      <div class="fic">📦</div>
+      <div class="fh">点击选择或拖放 .bin 固件文件</div>
+      <div class="fn" id="fName"></div>
     </div>
-    <input type="file" id="fileInput" accept=".bin" style="display:none" onchange="onFilePicked(event)">
-    <div class="row row-wrap" style="margin-top:10px;">
-      <span style="font-size:12px;color:var(--text-dim);">版本</span>
-      <div class="ver-group">
-        <input id="vMajor" value="1"><span class="sep">.</span>
-        <input id="vMinor" value="0"><span class="sep">.</span>
-        <input id="vPatch" value="0">
+    <input type="file" id="fInp" accept=".bin" style="display:none" onchange="onFile(event)">
+    <div class="row" style="margin-top:10px">
+      <span style="font-size:12px;color:var(--dim)">版本</span>
+      <div class="ver">
+        <input id="v0" value="1"><span class="sep">.</span>
+        <input id="v1" value="0"><span class="sep">.</span>
+        <input id="v2" value="0">
       </div>
-      <span style="font-size:12px;color:var(--text-dim);margin-left:auto;" id="fileSize">—</span>
+      <span style="font-size:12px;color:var(--dim);margin-left:auto" id="fSize">—</span>
     </div>
   </div>
 
-  <!-- ═══════════ Progress ═══════════ -->
-  <div class="card progress-section" id="progCard">
-    <div class="card-head"><span class="dot dot-active"></span> 升级进度</div>
-    <div class="progress-steps" id="progSteps">
-      <div class="step" id="step1">① 握 手</div>
-      <div class="step" id="step2">② 发 送</div>
-      <div class="step" id="step3">③ 校 验</div>
-      <div class="step" id="step4">④ 激 活</div>
+  <!-- Progress -->
+  <div class="card prog-wrap" id="pCard">
+    <div class="chd"><span class="dot" style="background:var(--pri);box-shadow:0 0 6px var(--pri)"></span> 升级进度</div>
+    <div class="steps" id="pSteps">
+      <div class="step" id="s1">① 握手</div><div class="step" id="s2">② 发送</div>
+      <div class="step" id="s3">③ 校验</div><div class="step" id="s4">④ 激活</div>
     </div>
-    <div class="progress-track"><div class="progress-fill" id="progBar"></div></div>
-    <div class="progress-info">
-      <span id="progText">就绪</span>
-      <span id="progPct">0%</span>
-    </div>
+    <div class="ptrack"><div class="pfill" id="pBar"></div></div>
+    <div class="pinfo"><span id="pTxt">就绪</span><span id="pPct">0%</span></div>
   </div>
 
-  <!-- ═══════════ Log ═══════════ -->
+  <!-- Log -->
   <div class="card">
-    <div class="card-head"><span class="dot dot-off" id="logDot"></span> 日志</div>
-    <div class="log-wrap" id="log"></div>
+    <div class="chd"><span class="dot dot-off" id="dLog"></span> 日志</div>
+    <div class="log" id="log"></div>
   </div>
 
-  <!-- ═══════════ Action ═══════════ -->
-  <button class="btn btn-primary" id="btnStart" onclick="doUpdate()" disabled
-          style="padding:12px 24px; font-size:15px; width:100%; border-radius:var(--radius);">
-    ⬆ 开始升级
-  </button>
-
-  <p class="footer">MCU 上电后 3 秒内为 OTA 窗口 · 升级完成自动复位运行新固件</p>
+  <!-- Action -->
+  <button class="btn btn-pri" id="bStart" onclick="doUpdate()" disabled
+    style="padding:12px 24px;font-size:15px;width:100%;border-radius:10px">⬆ 开始升级</button>
+  <p class="footer">MCU 上电后 3 秒内为 OTA 窗口 · 升级完成后自动复位运行新固件</p>
 </div>
 
 <script>
-/* ═══════════════════════════════════════════════════════════════════
-   Protocol constants
-   ═══════════════════════════════════════════════════════════════════ */
-const SYNC0=0xAA,SYNC1=0x55,MAX_PAYLOAD=1024;
-const CMD_PING=1,CMD_START_OTA=2,CMD_SEND_DATA=3,CMD_VERIFY=4,CMD_ACTIVATE=5,
-      CMD_GET_STATUS=6,CMD_GET_VERSION=7,CMD_RESET=8;
-const RESP_ACK=0x80,RESP_NACK=0x81,RESP_STATUS=0x82,RESP_VERSION=0x83;
-const CRC16_TABLE=[0x0000,0x1021,0x2042,0x3063,0x4084,0x50A5,0x60C6,0x70E7,0x8108,0x9129,0xA14A,0xB16B,0xC18C,0xD1AD,0xE1CE,0xF1EF,0x1231,0x0210,0x3273,0x2252,0x52B5,0x4294,0x72F7,0x62D6,0x9339,0x8318,0xB37B,0xA35A,0xD3BD,0xC39C,0xF3FF,0xE3DE,0x2462,0x3443,0x0420,0x1401,0x64E6,0x74C7,0x44A4,0x5485,0xA56A,0xB54B,0x8528,0x9509,0xE5EE,0xF5CF,0xC5AC,0xD58D,0x3653,0x2672,0x1611,0x0630,0x76D7,0x66F6,0x5695,0x46B4,0xB75B,0xA77A,0x9719,0x8738,0xF7DF,0xE7FE,0xD79D,0xC7BC,0x48C4,0x58E5,0x6886,0x78A7,0x0840,0x1861,0x2802,0x3823,0xC9CC,0xD9ED,0xE98E,0xF9AF,0x8948,0x9969,0xA90A,0xB92B,0x5AF5,0x4AD4,0x7AB7,0x6A96,0x1A71,0x0A50,0x3A33,0x2A12,0xDBFD,0xCBDC,0xFBBF,0xEB9E,0x9B79,0x8B58,0xBB3B,0xAB1A,0x6CA6,0x7C87,0x4CE4,0x5CC5,0x2C22,0x3C03,0x0C60,0x1C41,0xEDAE,0xFD8F,0xCDEC,0xDDCD,0xAD2A,0xBD0B,0x8D68,0x9D49,0x7E97,0x6EB6,0x5ED5,0x4EF4,0x3E13,0x2E32,0x1E51,0x0E70,0xFF9F,0xEFBE,0xDFDD,0xCFFC,0xBF1B,0xAF3A,0x9F59,0x8F78,0x9188,0x81A9,0xB1CA,0xA1EB,0xD10C,0xC12D,0xF14E,0xE16F,0x1080,0x00A1,0x30C2,0x20E3,0x5004,0x4025,0x7046,0x6067,0x83B9,0x9398,0xA3FB,0xB3DA,0xC33D,0xD31C,0xE37F,0xF35E,0x02B1,0x1290,0x22F3,0x32D2,0x4235,0x5214,0x6277,0x7256,0xB5EA,0xA5CB,0x95A8,0x8589,0xF56E,0xE54F,0xD52C,0xC50D,0x34E2,0x24C3,0x14A0,0x0481,0x7466,0x6447,0x5424,0x4405,0xA7DB,0xB7FA,0x8799,0x97B8,0xE75F,0xF77E,0xC71D,0xD73C,0x26D3,0x36F2,0x0691,0x16B0,0x6657,0x7676,0x4615,0x5634,0xD94C,0xC96D,0xF90E,0xE92F,0x99C8,0x89E9,0xB98A,0xA9AB,0x5844,0x4865,0x7806,0x6827,0x18C0,0x08E1,0x3882,0x28A3,0xCB7D,0xDB5C,0xEB3F,0xFB1E,0x8BF9,0x9BD8,0xABBB,0xBB9A,0x4A75,0x5A54,0x6A37,0x7A16,0x0AF1,0x1AD0,0x2AB3,0x3A92,0xFD2E,0xED0F,0xDD6C,0xCD4D,0xBDAA,0xAD8B,0x9DE8,0x8DC9,0x7C26,0x6C07,0x5C64,0x4C45,0x3CA2,0x2C83,0x1CE0,0x0CC1,0xEF1F,0xFF3E,0xCF5D,0xDF7C,0xAF9B,0xBFBA,0x8FD9,0x9FF8,0x6E17,0x7E36,0x4E55,0x5E74,0x2E93,0x3EB2,0x0ED1,0x1EF0];
+// ═══════════════════════════════════════════════════════════════════
+// Protocol constants
+// ═══════════════════════════════════════════════════════════════════
+const S0=0xAA,S1=0x55,MP=1024;
+const CP=1,CS=2,CD=3,CV=4,CA=5,CGS=6,CVV=7,CRS=8;
+const RA=0x80,RN=0x81,RS=0x82,RV=0x83;
 
-function crc16(d,c=0){for(let b of d)c=((c<<8)^CRC16_TABLE[((c>>8)^b)&0xFF])&0xFFFF;return c}
-function buildFrame(cmd,data=new Uint8Array(0)){const l=data.length,b=new Uint8Array(5+l+2);b[0]=SYNC0;b[1]=SYNC1;b[2]=cmd;b[3]=(l>>8)&0xFF;b[4]=l&0xFF;for(let i=0;i<l;i++)b[5+i]=data[i];const crc=crc16(b.slice(2,5+l));b[5+l]=(crc>>8)&0xFF;b[6+l]=crc&0xFF;return b}
+const TBL=new Uint16Array([
+0x0000,0x1021,0x2042,0x3063,0x4084,0x50A5,0x60C6,0x70E7,0x8108,0x9129,0xA14A,0xB16B,0xC18C,0xD1AD,0xE1CE,0xF1EF,
+0x1231,0x0210,0x3273,0x2252,0x52B5,0x4294,0x72F7,0x62D6,0x9339,0x8318,0xB37B,0xA35A,0xD3BD,0xC39C,0xF3FF,0xE3DE,
+0x2462,0x3443,0x0420,0x1401,0x64E6,0x74C7,0x44A4,0x5485,0xA56A,0xB54B,0x8528,0x9509,0xE5EE,0xF5CF,0xC5AC,0xD58D,
+0x3653,0x2672,0x1611,0x0630,0x76D7,0x66F6,0x5695,0x46B4,0xB75B,0xA77A,0x9719,0x8738,0xF7DF,0xE7FE,0xD79D,0xC7BC,
+0x48C4,0x58E5,0x6886,0x78A7,0x0840,0x1861,0x2802,0x3823,0xC9CC,0xD9ED,0xE98E,0xF9AF,0x8948,0x9969,0xA90A,0xB92B,
+0x5AF5,0x4AD4,0x7AB7,0x6A96,0x1A71,0x0A50,0x3A33,0x2A12,0xDBFD,0xCBDC,0xFBBF,0xEB9E,0x9B79,0x8B58,0xBB3B,0xAB1A,
+0x6CA6,0x7C87,0x4CE4,0x5CC5,0x2C22,0x3C03,0x0C60,0x1C41,0xEDAE,0xFD8F,0xCDEC,0xDDCD,0xAD2A,0xBD0B,0x8D68,0x9D49,
+0x7E97,0x6EB6,0x5ED5,0x4EF4,0x3E13,0x2E32,0x1E51,0x0E70,0xFF9F,0xEFBE,0xDFDD,0xCFFC,0xBF1B,0xAF3A,0x9F59,0x8F78,
+0x9188,0x81A9,0xB1CA,0xA1EB,0xD10C,0xC12D,0xF14E,0xE16F,0x1080,0x00A1,0x30C2,0x20E3,0x5004,0x4025,0x7046,0x6067,
+0x83B9,0x9398,0xA3FB,0xB3DA,0xC33D,0xD31C,0xE37F,0xF35E,0x02B1,0x1290,0x22F3,0x32D2,0x4235,0x5214,0x6277,0x7256,
+0xB5EA,0xA5CB,0x95A8,0x8589,0xF56E,0xE54F,0xD52C,0xC50D,0x34E2,0x24C3,0x14A0,0x0481,0x7466,0x6447,0x5424,0x4405,
+0xA7DB,0xB7FA,0x8799,0x97B8,0xE75F,0xF77E,0xC71D,0xD73C,0x26D3,0x36F2,0x0691,0x16B0,0x6657,0x7676,0x4615,0x5634,
+0xD94C,0xC96D,0xF90E,0xE92F,0x99C8,0x89E9,0xB98A,0xA9AB,0x5844,0x4865,0x7806,0x6827,0x18C0,0x08E1,0x3882,0x28A3,
+0xCB7D,0xDB5C,0xEB3F,0xFB1E,0x8BF9,0x9BD8,0xABBB,0xBB9A,0x4A75,0x5A54,0x6A37,0x7A16,0x0AF1,0x1AD0,0x2AB3,0x3A92,
+0xFD2E,0xED0F,0xDD6C,0xCD4D,0xBDAA,0xAD8B,0x9DE8,0x8DC9,0x7C26,0x6C07,0x5C64,0x4C45,0x3CA2,0x2C83,0x1CE0,0x0CC1,
+0xEF1F,0xFF3E,0xCF5D,0xDF7C,0xAF9B,0xBFBA,0x8FD9,0x9FF8,0x6E17,0x7E36,0x4E55,0x5E74,0x2E93,0x3EB2,0x0ED1,0x1EF0]);
 
-/* ═══════════════════════════════════════════════════════════════════
-   State
-   ═══════════════════════════════════════════════════════════════════ */
-let port=null,portReader=null,firmware=null,updating=false,reading=false;
-const $=id=>document.getElementById(id),logEl=$('log');
+function crc16(d,c=0){for(let b of d)c=((c<<8)^TBL[((c>>8)^b)&0xFF])&0xFFFF;return c}
+function bf(cmd,data=new Uint8Array(0)){let l=data.length,b=new Uint8Array(7+l);b[0]=S0;b[1]=S1;b[2]=cmd;b[3]=(l>>8)&0xFF;b[4]=l&0xFF;for(let i=0;i<l;i++)b[5+i]=data[i];let crc=crc16(b.slice(2,5+l));b[5+l]=(crc>>8)&0xFF;b[6+l]=crc&0xFF;return b}
 
-/* ═══════════════════════════════════════════════════════════════════
-   UI
-   ═══════════════════════════════════════════════════════════════════ */
-function log(msg,cls=''){const d=document.createElement('div');d.className='line '+(cls?'c-'+cls:'');d.textContent=msg;logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight}
-function setProgress(pct,text){$('progBar').style.width=pct+'%';$('progPct').textContent=pct+'%';if(text)$('progText').textContent=text}
-function stepMark(n,s){const el=$('step'+n);if(el){el.className='step '+s}}
+// ═══════════════════════════════════════════════════════════════════
+// State — one reader, one writer, one ring buffer
+// ═══════════════════════════════════════════════════════════════════
+let port=null,     // SerialPort handle
+    reader=null,   // persistent ReadableStream reader
+    ring=[],       // accumulated RX bytes (never discard mid-frame)
+    firmware=null,
+    updating=false;
 
-function setDeviceStatus(connected,info){
-  const b=$('devStatus'),d=$('connDot');
-  if(!connected){b.textContent='未连接';b.className='status-badge status-off';d.className='dot dot-off';$('devInfo').textContent='';$('logDot').className='dot dot-off';}
-  else if(info){b.textContent='已就绪';b.className='status-badge status-ok';d.className='dot dot-ok';$('devInfo').textContent=info;$('logDot').className='dot dot-ok';}
-  else{b.textContent='等待设备';b.className='status-badge status-warn';d.className='dot dot-warn';$('devInfo').textContent='';$('logDot').className='dot dot-warn';}
+const $=id=>document.getElementById(id),
+      logEl=$('log');
+
+// ═══════════════════════════════════════════════════════════════════
+// Log / UI helpers
+// ═══════════════════════════════════════════════════════════════════
+function log(m,c=''){let d=document.createElement('div');d.className='L '+(c?'c-'+c:'');d.textContent=m;logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight}
+
+function setProg(p,t){$('pBar').style.width=p+'%';$('pPct').textContent=p+'%';if(t)$('pTxt').textContent=t}
+function stepOn(n,s){let e=$('s'+n);if(e)e.className='step '+s}
+
+function setDev(c,info){
+  let b=$('bDev'),d=$('dCon'),dl=$('dLog');
+  if(!c){b.textContent='未连接';b.className='badge badge-off';d.className='dot dot-off';$('sInfo').textContent='';dl.className='dot dot-off'}
+  else if(info){b.textContent='已就绪';b.className='badge badge-ok';d.className='dot dot-ok';$('sInfo').textContent=info;dl.className='dot dot-ok'}
+  else{b.textContent='等待设备';b.className='badge badge-warn';d.className='dot dot-warn';$('sInfo').textContent='';dl.className='dot dot-warn'}
 }
-function setButtons(){
-  const c=!!(port&&port.readable);
-  $('btnConnect').textContent=c?'断开':'连接';
-  $('btnConnect').className=c?'btn btn-ok':'btn btn-outline';
-  $('btnDetect').disabled=!c;$('btnPing').disabled=!c;$('btnReset').disabled=!c;
-  $('btnStart').disabled=!c||!firmware;
+function setBtns(){
+  let c=!!(port&&port.readable);
+  $('bCon').textContent=c?'断开':'连接';
+  $('bCon').className=c?'btn btn-ok':'btn btn-out';
+  $('bDet').disabled=!c;$('bPing').disabled=!c;$('bRst').disabled=!c;
+  $('bStart').disabled=!c||!firmware;
 }
-function setFileUI(name,sz){
-  if(name){$('fileName').textContent=name;$('fileZone').classList.add('has-file');
-    $('fileSize').textContent=`${sz.toLocaleString()} B (${(sz/1024).toFixed(1)} KB)`;$('fwDot').className='dot dot-ok';}
-  else{$('fileName').textContent='';$('fileZone').classList.remove('has-file');
-    $('fileSize').textContent='—';$('fwDot').className='dot dot-off';}
+function setFile(name,sz){
+  if(name){$('fName').textContent=name;$('fz').classList.add('has');$('fSize').textContent=sz.toLocaleString()+' B ('+(sz/1024).toFixed(1)+' KB)';$('dFw').className='dot dot-ok'}
+  else{$('fName').textContent='';$('fz').classList.remove('has');$('fSize').textContent='—';$('dFw').className='dot dot-off'}
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   Serial
-   ═══════════════════════════════════════════════════════════════════ */
+// ═══════════════════════════════════════════════════════════════════
+// Serial — one reader for life
+// ═══════════════════════════════════════════════════════════════════
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+
 async function refreshPorts(){
-  $('selPort').innerHTML='<option value="">— 选择串口 —</option>';
-  try{const ports=await navigator.serial.getPorts();
-    for(const p of ports){const o=document.createElement('option');o.value=ports.indexOf(p);
-      const info=p.getInfo&&p.getInfo();o.textContent=(info&&info.usbProductName)||`COM 端口 #${ports.indexOf(p)+1}`;$('selPort').appendChild(o);}
-  }catch(e){}
+  $('sPort').innerHTML='<option value="">— 选择串口 —</option>';
+  try{let ps=await navigator.serial.getPorts();for(let p of ps){let o=document.createElement('option');o.value=ps.indexOf(p);let i=p.getInfo&&p.getInfo();o.textContent=(i&&i.usbProductName)||'COM #'+(ps.indexOf(p)+1);$('sPort').appendChild(o)}}
+  catch(e){}
 }
-async function requestPort(){try{const p=await navigator.serial.requestPort();await refreshPorts();$('selPort').selectedIndex=$('selPort').options.length-1;return p}catch(e){return null}}
+async function reqPort(){try{let p=await navigator.serial.requestPort();await refreshPorts();$('sPort').selectedIndex=$('sPort').options.length-1;return p}catch(e){return null}}
+
 async function toggleConnect(){
+  // ── Disconnect ──
   if(port&&port.readable){
-    reading=false;
-    try{portReader&&portReader.releaseLock()}catch(e){}portReader=null;
-    try{await port.close()}catch(e){}port=null;
-    log('已断开连接','dim');setDeviceStatus(false);setButtons();return;
+    if(reader){try{reader.cancel()}catch(e){}reader=null}
+    try{await port.close()}catch(e){}port=null;ring=[];
+    log('已断开连接','dim');setDev(false);setBtns();return;
   }
-  let idx=parseInt($('selPort').value),sp=null;
-  try{const ports=await navigator.serial.getPorts();if(isNaN(idx)||idx<0||idx>=ports.length)sp=await requestPort();else sp=ports[idx]}catch(e){sp=await requestPort()}
+  // ── Connect ──
+  let idx=parseInt($('sPort').value),sp=null;
+  try{let ps=await navigator.serial.getPorts();if(isNaN(idx)||idx<0||idx>=ps.length)sp=await reqPort();else sp=ps[idx]}catch(e){sp=await reqPort()}
   if(!sp)return;
+
+  // Ensure clean state
   try{await sp.close()}catch(e){}
-  const baud=parseInt($('selBaud').value);
-  try{
-    await sp.open({baudRate:baud,dataBits:8,stopBits:1,parity:'none',flowControl:'none'});
-    // Some USB-TTL chips (CH340, CP2102) require DTR to be asserted
-    try{await sp.setSignals({dataTerminalReady:true,requestToSend:false})}catch(e){}
-  }catch(openErr){
-    // Common causes: port in use by another app, stale handle, driver issue
-    log(`打开串口失败: ${openErr.message||openErr}`,'fail');
-    if(String(openErr).includes('open'))
-      log('  串口可能被其他程序占用 (串口助手/IDE/另一个浏览器标签页)','warn');
-    log('  请关闭占用该串口的程序后重试','warn');
-    setDeviceStatus(false);setButtons();
-    // Forget the stale port so next attempt requests fresh one
-    try{await sp.forget()}catch(e){}
-    await refreshPorts();
-    return;
-  }
-  port=sp;
-  // Let USB-UART settle; ring buffer in recvFrame handles any noise
-  await sleep(200);
-  try{portReader=port.readable.getReader()}catch(e){log('创建 reader 失败: '+e,'fail');return}
-  log(`已连接 @ ${baud} baud`,'ok');setButtons();setDeviceStatus(true);await detectOnce()
-}
-function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+  let baud=parseInt($('sBaud').value);
+  try{await sp.open({baudRate:baud,dataBits:8,stopBits:1,parity:'none',flowControl:'none'})}
+  catch(e){log('打开失败: '+(e.message||e),'fail');log('  串口可能被其他程序占用','warn');try{await sp.forget()}catch(x){}await refreshPorts();return}
 
-/* ═══════════════════════════════════════════════════════════════════
-   Protocol I/O
-   NOTE: Web Serial reader.read() blocks with no native timeout.
-   Never call reader.cancel() — it closes the entire ReadableStream.
-   Sync-pattern detection naturally skips garbage, so no flush needed.
-   ═══════════════════════════════════════════════════════════════════ */
-function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+  port=sp;ring=[];
 
-async function sendFrame(cmd,data=new Uint8Array(0)){
-  const f=buildFrame(cmd,data);
-  if(!port||!port.writable)return;
-  const w=port.writable.getWriter();
-  try{await w.write(f)}finally{
-    try{w.releaseLock()}catch(e){}
-  }
-  // At 9600 baud, 1 byte ≈ 1ms.  Give the MCU time to receive before we read.
-  await sleep(30);
+  // Create the ONE persistent reader
+  try{reader=port.readable.getReader()}catch(e){log('创建 reader 失败: '+e,'fail');return}
+
+  // Let USB-UART settle
+  await sleep(300);
+
+  log('已连接 @ '+baud+' baud','ok');setBtns();setDev(true);
+  log('等待 Bootloader（请上电 MCU）…','dim');
+
+  // Try to detect
+  let ok=await tryPing();
+  if(ok){let v=await tryVersion();setDev(true,v||'已连接');log('Bootloader '+(v||'在线'),'ok')}
 }
 
-/* recvFrame — collect bytes into a ring buffer, then parse.
-   reader.read() may return many bytes at once; we must not lose
-   any leftover bytes when we break after finding the sync pattern.
-   Never calls reader.cancel() — that closes the ReadableStream. */
-/* recvFrame — uses persistent portReader (created once at connect).
-   Mutex via `reading` flag prevents overlapping reads that would
-   lock the ReadableStream permanently. */
-async function recvFrame(timeoutMs=3000,_dbg){
-  if(!portReader||reading)return null;
-  reading=true;
-  async function fill(ring,need){
-    while(ring.length<need){
-      const{v,done}=await portReader.read();
-      if(done)return false;
-      if(v){for(let b of v)ring.push(b);if(_dbg)console.log('recvFrame read '+v.length+'B, ring '+ring.length)}
+// ═══════════════════════════════════════════════════════════════════
+// Protocol — all reads go through the persistent `reader`
+// ═══════════════════════════════════════════════════════════════════
+
+// Pull more bytes from the serial stream into `ring`
+async function pull(need){
+  while(ring.length<need){
+    let r;
+    try{r=await reader.read()}catch(e){return false}
+    if(r.done)return false;
+    if(r.value)for(let b of r.value)ring.push(b);
+  }
+  return true;
+}
+
+// Try to extract one complete frame from ring.
+// Returns {cmd,payload} or null if no valid frame found.
+// On CRC failure, discards the bad sync and retries.
+function extract(){
+  while(true){
+    // find AA 55
+    let si=-1;
+    for(let i=0;i<ring.length-1;i++){if(ring[i]===S0&&ring[i+1]===S1){si=i;break}}
+    if(si<0){
+      // No sync found — keep only last byte (might be AA)
+      if(ring.length>1)ring=ring.slice(-1);
+      return null; // need more data
     }
-    return true;
+    // Discard garbage before sync
+    ring=ring.slice(si);
+    if(ring.length<7)return null; // need at least header + CRC (no payload minimum)
+
+    let cmd=ring[2],plen=(ring[3]<<8)|ring[4];
+    if(plen>MP){ring=ring.slice(5);continue;} // bogus length, skip
+
+    let total=7+plen; // 5 hdr + plen payload + 2 CRC
+    if(ring.length<total)return null; // need more data
+
+    // Verify CRC
+    let frame=ring.slice(2,5+plen);
+    let crcRx=(ring[5+plen]<<8)|ring[6+plen];
+    if(crc16(frame)!==crcRx){ring=ring.slice(2);continue;} // CRC fail, skip
+
+    let payload=ring.slice(5,5+plen);
+    ring=ring.slice(total); // consume frame
+    return{cmd,payload:new Uint8Array(payload)};
   }
-  let ring=[],loops=0;
-  try{
-    while(true){
-      if(++loops>50){reading=false;return null;}
-      let si=-1;
-      for(let i=0;i<ring.length-1;i++){if(ring[i]===SYNC0&&ring[i+1]===SYNC1){si=i;break}}
-      if(si<0){
-        if(ring.length>1)ring=ring.slice(-1);
-        const ok=await fill(ring,2);if(!ok){reading=false;return null}
-        continue;
-      }
-      ring=ring.slice(si);
-      if(!(await fill(ring,5))){reading=false;return null}
-      const cmd=ring[2],plen=(ring[3]<<8)|ring[4];
-      if(plen>MAX_PAYLOAD){ring=ring.slice(5);continue;}
-      const total=5+plen+2;
-      if(!(await fill(ring,total))){reading=false;return null}
-      const frameBytes=ring.slice(2,5+plen);
-      const crcRx=(ring[5+plen]<<8)|ring[5+plen+1];
-      if(crc16(frameBytes)!==crcRx){ring=ring.slice(2);continue;}
-      reading=false;
-      return{cmd,payload:new Uint8Array(ring.slice(5,5+plen))};
-    }
-  }catch(e){reading=false;return null}
 }
 
-async function sendCmd(cmd,data,ack=true){await sendFrame(cmd,data);if(!ack)return true;const r=await recvFrame(3000);return r&&r.cmd===RESP_ACK}
-async function ping(timeoutMs=1500,dbg){await sendFrame(CMD_PING);const r=await recvFrame(timeoutMs,dbg);return r&&r.cmd===RESP_ACK}
-async function getVersion(){await sendFrame(CMD_GET_VERSION);const r=await recvFrame(2000);if(r&&r.cmd===RESP_VERSION&&r.payload.length>=12){const dv=new DataView(r.payload.buffer);const pv=dv.getUint16(0,false),ma=dv.getUint16(2,false),mi=dv.getUint16(4,false),pa=dv.getUint16(6,false);return`v${ma}.${mi}.${pa} (proto ${pv>>8}.${pv&0xFF})`}return null}
+// Send a frame, then wait for a response frame.
+async function txrx(cmd,data=new Uint8Array(0),timeoutMs=2000){
+  // Send
+  let f=bf(cmd,data);
+  let w=port.writable.getWriter();
+  try{await w.write(f)}finally{try{w.releaseLock()}catch(e){}}
+  await sleep(20); // let TX finish at 9600 baud
 
-async function detectOnce(){
-  const ok=await ping(500); // MCU responds in <20ms if in OTA mode
-  if(ok){const v=await getVersion();setDeviceStatus(true,v||'已连接');log(`Bootloader ${v||'在线'}`,'ok');return true}
-  log('未检测到设备 — 请确保 MCU 已上电并进入 OTA 模式','warn');return false;
+  // Receive: try pull+extract until deadline
+  let dl=Date.now()+timeoutMs;
+  while(Date.now()<dl){
+    // Try extract from existing ring first
+    let r=extract();
+    if(r)return r;
+    // Need more bytes — pull from stream (short block, loop retries)
+    let ok=await pull(ring.length+1);
+    if(!ok)return null;
+  }
+  return null;
 }
-async function doDetect(){if(!port)return;log('重新检测…','dim');setDeviceStatus(true);await detectOnce()}
-async function doPing(){if(!port)return;log('Ping…','dim');const ok=await ping(500,true);log(ok?'Pong!':'无响应 (已发7字节, 未收到回复)',ok?'ok':'fail')}
-async function doReset(){if(!port)return;log('发送复位…','dim');await sendFrame(CMD_RESET);log('设备应已复位','ok')}
 
-/* ═══════════════════════════════════════════════════════════════════
-   File
-   ═══════════════════════════════════════════════════════════════════ */
-function pickFile(){$('fileInput').click()}
-function onFilePicked(e){const f=e.target.files[0];if(!f)return;setFileUI(f.name,f.size);const r=new FileReader();r.onload=()=>{firmware=new Uint8Array(r.result);const sz=firmware.length;if(sz>48*1024)log(`固件 ${sz} B 超过 48KB 分区限制`,'warn');else log(`加载固件: ${f.name} (${sz} B)`,'ok');if(f.name.endsWith('.bin')){const m=f.name.match(/v?(\d+)[._](\d+)[._](\d+)/);if(m){$('vMajor').value=m[1];$('vMinor').value=m[2];$('vPatch').value=m[3]}}setButtons()};r.readAsArrayBuffer(f)}
-const fz=$('fileZone');fz.addEventListener('dragover',e=>{e.preventDefault();fz.classList.add('drag-over')});fz.addEventListener('dragleave',()=>fz.classList.remove('drag-over'));fz.addEventListener('drop',e=>{e.preventDefault();fz.classList.remove('drag-over');const f=e.dataTransfer.files[0];if(f){const dt=new DataTransfer();dt.items.add(f);$('fileInput').files=dt.files;onFilePicked({target:$('fileInput')})}});
+async function tryPing(){let r=await txrx(CP,new Uint8Array(0),500);return r&&r.cmd===RA}
+async function tryVersion(){let r=await txrx(CVV,new Uint8Array(0),800);if(r&&r.cmd===RV&&r.payload.length>=12){let dv=new DataView(r.payload.buffer);let pv=dv.getUint16(0,false),ma=dv.getUint16(2,false),mi=dv.getUint16(4,false),pa=dv.getUint16(6,false);return'v'+ma+'.'+mi+'.'+pa+' (proto '+((pv>>8)&0xFF)+'.'+(pv&0xFF)+')'}return null}
 
-/* ═══════════════════════════════════════════════════════════════════
-   OTA workflow
-   ═══════════════════════════════════════════════════════════════════ */
+async function doDetect(){if(!port)return;log('重新检测…','dim');setDev(true);let ok=await tryPing();if(ok){let v=await tryVersion();setDev(true,v||'已连接');log('Bootloader '+(v||'在线'),'ok')}else{log('未检测到 — 请确保 MCU 在 OTA 窗口内上电','warn')}}
+async function doPing(){if(!port)return;log('Ping…','dim');let ok=await tryPing();log(ok?'Pong!':'无响应',ok?'ok':'fail')}
+async function doReset(){if(!port)return;log('复位…','dim');let f=bf(CRS);let w=port.writable.getWriter();try{await w.write(f)}finally{try{w.releaseLock()}catch(e){}}log('已发送复位命令','ok')}
+
+// ═══════════════════════════════════════════════════════════════════
+// File handling
+// ═══════════════════════════════════════════════════════════════════
+function pickFile(){$('fInp').click()}
+function onFile(e){
+  let f=e.target.files[0];if(!f)return;
+  setFile(f.name,f.size);
+  let fr=new FileReader();
+  fr.onload=()=>{firmware=new Uint8Array(fr.result);let sz=firmware.length;if(sz>48*1024)log('固件 '+sz+'B 超过 48KB 限制','warn');else log('加载固件: '+f.name+' ('+sz+' B)','ok');setBtns()};
+  fr.readAsArrayBuffer(f);
+}
+let fz=$('fz');
+fz.addEventListener('dragover',e=>{e.preventDefault();fz.classList.add('drag')});
+fz.addEventListener('dragleave',()=>fz.classList.remove('drag'));
+fz.addEventListener('drop',e=>{e.preventDefault();fz.classList.remove('drag');let f=e.dataTransfer.files[0];if(f){let dt=new DataTransfer();dt.items.add(f);$('fInp').files=dt.files;onFile({target:$('fInp')})}});
+
+// ═══════════════════════════════════════════════════════════════════
+// OTA workflow
+// ═══════════════════════════════════════════════════════════════════
 async function doUpdate(){
-  if(updating||!firmware||!port)return;updating=true;$('btnStart').disabled=true;$('btnStart').innerHTML='<span class="spinner"></span> 升级中…';$('progCard').classList.add('active');logEl.innerHTML='';setProgress(0,'准备中');[1,2,3,4].forEach(i=>stepMark(i,''));
-  try{const fw=firmware,major=parseInt($('vMajor').value)||0,minor=parseInt($('vMinor').value)||0,patch=parseInt($('vPatch').value)||0;
+  if(updating||!firmware||!port)return;
+  updating=true;$('bStart').disabled=true;$('bStart').innerHTML='<span class="spin"></span> 升级中…';
+  $('pCard').classList.add('on');logEl.innerHTML='';setProg(0,'准备中');[1,2,3,4].forEach(i=>stepOn(i,''));
 
-    stepMark(1,'active');log('→ 检测 Bootloader…','dim');
-    if(!await ping()){log('✗ 无响应 — 请复位设备进入 OTA 窗口','fail');stepMark(1,'error');return}
-    log('✓ Bootloader 在线','ok');stepMark(1,'done');
-    const v=await getVersion();if(v)log(`  ${v}`,'info');
+  try{
+    let fw=firmware,m0=parseInt($('v0').value)||0,m1=parseInt($('v1').value)||0,m2=parseInt($('v2').value)||0;
 
-    stepMark(2,'active');log(`→ 开始 OTA: v${major}.${minor}.${patch}  ${fw.length} B`,'dim');setProgress(0,'擦除 Flash…');
-    const sp=new Uint8Array(12),ds=new DataView(sp.buffer);ds.setUint32(0,fw.length,false);ds.setUint16(4,major,false);ds.setUint16(6,minor,false);ds.setUint16(8,patch,false);
-    if(!await sendCmd(CMD_START_OTA,sp)){log('✗ START_OTA 失败','fail');stepMark(2,'error');return}
-    log('✓ 设备已就绪','ok');
+    // 1. Handshake
+    stepOn(1,'act');log('→ 检测 Bootloader…','dim');
+    let r=await txrx(CP,new Uint8Array(0),3000);
+    if(!r||r.cmd!==RA){log('✗ 无响应 — 请复位 MCU 进入 OTA 窗口','fail');stepOn(1,'err');return}
+    log('✓ 在线','ok');stepOn(1,'done');
+    let v=await tryVersion();if(v)log('  '+v,'info');
 
-    const cs=MAX_PAYLOAD-4;let off=0,errs=0,total=fw.length;
-    while(off<total){const end=Math.min(off+cs,total),ch=fw.slice(off,end),p=new Uint8Array(4+ch.length),dv=new DataView(p.buffer);dv.setUint32(0,off,false);p.set(ch,4);
-      if(await sendCmd(CMD_SEND_DATA,p)){off=end;const pct=Math.round(off*100/total);setProgress(pct,`发送 ${off.toLocaleString()}/${total.toLocaleString()}`);errs=0}
-      else{errs++;if(errs>3){log(`✗ 发送失败 @ ${off}`,'fail');stepMark(2,'error');return}log(`  重试 offset=${off}…`,'warn');await sleep(200)}}
-    log(`✓ 发送完成 (${off.toLocaleString()} B)`,'ok');stepMark(2,'done');
+    // 2. START_OTA
+    stepOn(2,'act');log('→ 开始 OTA v'+m0+'.'+m1+'.'+m2+'  '+fw.length+'B','dim');setProg(0,'擦除 Flash…');
+    let sp=new Uint8Array(12),ds=new DataView(sp.buffer);
+    ds.setUint32(0,fw.length,false);ds.setUint16(4,m0,false);ds.setUint16(6,m1,false);ds.setUint16(8,m2,false);
+    r=await txrx(CS,sp,5000);
+    if(!r||r.cmd!==RA){log('✗ START_OTA 失败','fail');stepOn(2,'err');return}
+    log('✓ 设备就绪','ok');
 
-    stepMark(3,'active');log('→ 校验 CRC…','dim');setProgress(95,'校验中…');
-    if(!await sendCmd(CMD_VERIFY)){log('✗ CRC 校验失败','fail');stepMark(3,'error');return}
-    log('✓ CRC 通过','ok');stepMark(3,'done');
+    // 3. Send data
+    let cs=MP-4,off=0,errs=0,total=fw.length;
+    while(off<total){
+      let end=Math.min(off+cs,total),ch=fw.slice(off,end),p=new Uint8Array(4+ch.length),dv=new DataView(p.buffer);
+      dv.setUint32(0,off,false);p.set(ch,4);
+      r=await txrx(CD,p,2000);
+      if(r&&r.cmd===RA){off=end;let pct=Math.round(off*100/total);setProg(pct,'发送 '+off.toLocaleString()+'/'+total.toLocaleString());errs=0}
+      else{errs++;if(errs>3){log('✗ 发送失败 @ '+off,'fail');stepOn(2,'err');return}log('  重试 offset='+off+'…','warn');await sleep(200)}
+    }
+    log('✓ 发送完成 ('+off.toLocaleString()+' B)','ok');stepOn(2,'done');
 
-    stepMark(4,'active');log('→ 激活新固件…','dim');setProgress(100,'激活中…');await sendFrame(CMD_ACTIVATE);await sleep(300);
-    log('');log('═'.repeat(40),'ok');log('  ✓ 升级完成！设备正在重启…','ok');log(`  新版本 v${major}.${minor}.${patch}`,'ok');log('═'.repeat(40),'ok');stepMark(4,'done');setProgress(100,'完成 ✓')
-  }catch(e){log(`异常: ${e}`,'fail')}finally{updating=false;$('btnStart').innerHTML='⬆ 开始升级';setButtons()}
+    // 4. Verify
+    stepOn(3,'act');log('→ 校验 CRC…','dim');setProg(95,'校验中…');
+    r=await txrx(CV,new Uint8Array(0),5000);
+    if(!r||r.cmd!==RA){log('✗ CRC 校验失败','fail');stepOn(3,'err');return}
+    log('✓ CRC 通过','ok');stepOn(3,'done');
+
+    // 5. Activate
+    stepOn(4,'act');log('→ 激活…','dim');setProg(100,'激活中…');
+    let f=bf(CA);let w=port.writable.getWriter();try{await w.write(f)}finally{try{w.releaseLock()}catch(e){}}
+    await sleep(300);
+    log('');log('═'.repeat(40),'ok');log('  ✓ 升级完成！设备正在重启…','ok');log('  新版本 v'+m0+'.'+m1+'.'+m2,'ok');log('═'.repeat(40),'ok');
+    stepOn(4,'done');setProg(100,'完成 ✓');
+  }catch(e){log('异常: '+e,'fail')}
+  finally{updating=false;$('bStart').innerHTML='⬆ 开始升级';setBtns()}
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   Init
-   ═══════════════════════════════════════════════════════════════════ */
-async function init(){if(!('serial' in navigator)){log('✗ 浏览器不支持 Web Serial API — 请用 Chrome/Edge','fail');return}
-  $('btnRefresh').disabled=false;$('btnConnect').disabled=false;await refreshPorts();
+// ═══════════════════════════════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════════════════════════════
+async function init(){
+  if(!('serial' in navigator)){log('✗ 浏览器不支持 Web Serial API — 请用 Chrome/Edge','fail');return}
+  $('bRef').disabled=false;$('bCon').disabled=false;await refreshPorts();
   navigator.serial.addEventListener('connect',()=>{refreshPorts();log('检测到新串口','dim')});
-  navigator.serial.addEventListener('disconnect',()=>{log('串口已断开','warn');reading=false;try{portReader&&portReader.releaseLock()}catch(e){}portReader=null;port=null;setDeviceStatus(false);setButtons()})}
+  navigator.serial.addEventListener('disconnect',()=>{log('串口已断开','warn');if(reader){try{reader.cancel()}catch(e){}}reader=null;port=null;ring=[];setDev(false);setBtns()});
+}
 init();
 </script>
 </body>
