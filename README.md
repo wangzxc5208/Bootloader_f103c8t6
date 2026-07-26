@@ -1,8 +1,11 @@
 # STM32F103C8T6 USART Bootloader
 
+> **无魔数版本** — 不需要 `0xCAFEBABE` 魔数，向量表合规即可启动。
+
 基于 USART2 的固件下载 bootloader。单分区设计，简单直接，带完整环境清理。
 
 > 原 A/B 分区 + 版本回滚完整版在 `legacy-ab` 分支。
+> 带魔数校验的原始版本在 [`main`](../../tree/main) 分支。
 
 ## 硬件
 
@@ -172,9 +175,13 @@ bootloader 跳转前已切回 HSI 8MHz，App 从干净状态启动，`SystemCloc
 
 ## 分支
 
+> **本分支 (`no-magic-check`) 无魔数校验** — App 只要向量表合规（SP 在 RAM、PC 在 Flash、thumb bit=1）就能启动。\
+> 如果需要魔数校验，切换至 [`main`](../../tree/main) 分支。
+
 | 分支 | 说明 |
 |------|------|
-| `main` | **简化版** — 单分区 USART 下载 + 环境清理 |
+| `main` | **简化版（带魔数）** — 单分区 + 魔数 `0xCAFEBABE` 校验 |
+| `no-magic-check` | **简化版（无魔数）** — 单分区，去掉魔数，向量表合规即启动 |
 | `legacy-ab` | 完整版 — A/B 双分区 + 版本回滚 + Info Block |
 
 ## 代码风格
