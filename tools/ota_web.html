@@ -156,6 +156,7 @@ select { cursor: pointer; }
 
   <!-- Actions -->
   <div class="row" style="justify-content: center; gap: 10px;">
+    <button class="btn btn-outline" id="btnDetect" onclick="doDetect()" disabled>🔍 重新检测</button>
     <button class="btn btn-outline" id="btnPing" onclick="doPing()" disabled>📡 Ping</button>
     <button class="btn btn-primary" id="btnStart" onclick="doUpdate()" disabled>⬆ 开始升级</button>
     <button class="btn btn-danger btn-sm" id="btnReset" onclick="doReset()" disabled>↺ 复位</button>
@@ -257,6 +258,7 @@ function setButtons() {
   const connected = !!(port && port.readable);
   $('btnConnect').textContent = connected ? '断开' : '连接';
   $('btnConnect').className = connected ? 'btn btn-ok' : 'btn btn-outline';
+  $('btnDetect').disabled = !connected;
   $('btnPing').disabled = !connected;
   $('btnStart').disabled = !connected || !firmware;
   $('btnReset').disabled = !connected;
@@ -329,16 +331,9 @@ async function toggleConnect() {
     log(`[系统] 已连接 @ ${baud} baud`, 'ok');
     setButtons();
 
-    // Auto-ping
-    log('[→] 检测 Bootloader...', 'dim');
-    await sleep(200);
-    const ok = await ping();
-    if (ok) {
-      log('[✓] Bootloader 在线', 'ok');
-      try { await getVersion(); } catch (e) {}
-    } else {
-      log('[⚠] 未检测到 Bootloader — 请复位设备进入 OTA 窗口', 'warn');
-    }
+    // Auto-detect with retries (MCU may not be powered yet)
+    log('[→] 等待 Bootloader...', 'dim');
+    await detectBootloader(5); // retry up to 5 times
   } catch (e) {
     log(`[系统] 连接失败: ${e}`, 'fail');
   }
@@ -349,6 +344,50 @@ async function toggleConnect() {
 // ═══════════════════════════════════════════════════════════════════
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/** Drain any pending RX data (garbage from MCU power-on) */
+async function flushPort() {
+  if (!port || !port.readable) return;
+  try {
+    const reader = port.readable.getReader();
+    let drained = 0;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 150) {
+      try {
+        const { value, done } = await reader.read();
+        if (done || !value || value.length === 0) break;
+        drained += value.length;
+      } catch (e) { break; }
+    }
+    try { reader.releaseLock(); } catch (e) {}
+    if (drained > 0) log(`[系统] 已丢弃 ${drained} 字节噪声数据`, 'dim');
+  } catch (e) {}
+}
+
+/** Try to detect bootloader with retries, flushing noise before each attempt */
+async function detectBootloader(maxRetries) {
+  for (let i = 0; i < maxRetries; i++) {
+    await flushPort();
+    const ok = await ping();
+    if (ok) {
+      log('[✓] Bootloader 在线', 'ok');
+      try { await getVersion(); } catch (e) {}
+      return true;
+    }
+    if (i < maxRetries - 1) {
+      log(`  未响应, ${maxRetries - i - 1} 秒后重试...`, 'dim');
+      await sleep(1000);
+    }
+  }
+  log('[⚠] 未检测到 Bootloader — 请给 MCU 上电后点「重新检测」', 'warn');
+  return false;
+}
+
+async function doDetect() {
+  if (!port) return;
+  log('[→] 重新检测 Bootloader...', 'dim');
+  await detectBootloader(5);
+}
 
 async function sendFrame(cmd, data = new Uint8Array(0)) {
   const frame = buildFrame(cmd, data);
@@ -607,6 +646,7 @@ async function doUpdate() {
 async function doPing() {
   if (!port) return;
   log('[→] Ping...', 'dim');
+  await flushPort();
   const ok = await ping();
   log(ok ? '[✓] Pong!' : '[✗] 无响应', ok ? 'ok' : 'fail');
 }
