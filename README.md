@@ -1,8 +1,11 @@
 # STM32F103C8T6 USART Bootloader
 
+> **带魔数版本** — App 必须在 `0x08004200` 处放置 `0xCAFEBABE` 才能启动。
+
 基于 USART2 的固件下载 bootloader。单分区设计，简单直接，带完整环境清理。
 
 > 原 A/B 分区 + 版本回滚完整版在 `legacy-ab` 分支。
+> 无魔数版本在 [`no-magic-check`](../../tree/no-magic-check) 分支。
 
 ## 硬件
 
