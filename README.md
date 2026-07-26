@@ -87,10 +87,19 @@ STM32 GND      ──── USB-TTL GND
 
 ## 构建
 
+CMake 会在链接后自动调用 `arm-none-eabi-objcopy` 生成 .bin 文件。
+
 ```bash
 cmake --preset Debug
 cmake --build build/Debug
-# 产物: build/Debug/bootloader_f103.bin (ST-Link 烧录到 0x08000000)
+# 产物: build/Debug/bootloader_f103.bin (烧录到 0x08000000)
+#      build/Debug/bootloader_f103.elf (调试用)
+```
+
+Release 版本：
+```bash
+cmake --preset Release
+cmake --build build/Release
 ```
 
 ## OTA 工具
