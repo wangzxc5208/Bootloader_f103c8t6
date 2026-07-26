@@ -85,15 +85,16 @@ bool ota_enter_check(struct transport *transport, u32 timeout_ms)
 /**
  * ota_select_slot - choose which slot to write the new image to
  *
- * Writes to the slot that is NOT currently active.  This way, if
- * the update fails, the current running image is not affected.
+ * Always returns SLOT_A because the app is linked for 0x08004000.
+ * (A/B switching requires a position-independent app or two builds.)
+ *
+ * Rollback is still supported: old Slot A is backed up to Slot B
+ * before erasing, and restored on failure.
  */
 static u32 ota_select_slot(const struct info_block *ib)
 {
-    if (!ib)
-        return SLOT_B;  /* Default to B */
-
-    return other_slot(ib->active_slot);
+    (void)ib;
+    return SLOT_A;  /* App is always compiled for Slot A */
 }
 
 /* ── Internal: erase target slot ─────────────────────────────────── */
