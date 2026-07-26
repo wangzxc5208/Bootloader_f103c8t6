@@ -14,6 +14,9 @@
 #include "types.h"
 #include "boot.h"
 
+/* Forward declarations */
+struct transport;
+
 /* ── Frame constants ─────────────────────────────────────────────── */
 
 #define PROTO_SYNC0        0xAAU

@@ -13,7 +13,7 @@
 
 #include "uart.h"
 #include "boot.h"
-#include "errno.h"
+#include "boot_errno.h"
 #include "compiler.h"
 #include "stm32f1xx_hal.h"
 #include "main.h"
@@ -33,6 +33,10 @@ struct uart_priv {
 
 /* Ensure huart2 is accessible from stm32f1xx_it.c */
 UART_HandleTypeDef huart2;
+
+/* Static pointer to transport — used by HAL_UART_RxCpltCallback */
+/* (STM32F1 HAL UART_HandleTypeDef has no user_data field) */
+static struct transport *g_uart2_transport;
 
 /* ── Ring buffer helpers ─────────────────────────────────────────── */
 
@@ -79,9 +83,8 @@ static void rx_buf_put_isr(struct uart_priv *p, u8 byte)
  */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *handle)
 {
-    if (handle == &huart2) {
-        struct transport *t = (struct transport *)handle->user_data;
-        struct uart_priv *p = t->priv;
+    if (handle == &huart2 && g_uart2_transport) {
+        struct uart_priv *p = g_uart2_transport->priv;
         rx_buf_put_isr(p, p->rx_byte);
         /* Re-arm for next byte */
         HAL_UART_Receive_IT(handle, (u8 *)&p->rx_byte, 1);
@@ -107,7 +110,9 @@ static int uart_init(struct transport *t)
     h->Init.Mode       = UART_MODE_TX_RX;
     h->Init.HwFlowCtl  = BOOT_UART_FLOWCTRL;
     h->Init.OverSampling = UART_OVERSAMPLING_16;
-    h->user_data        = t;  /* So callback can get back to transport */
+
+    /* Store transport pointer for ISR callback access */
+    g_uart2_transport = t;
 
     if (HAL_UART_Init(h) != HAL_OK)
         return E_IO;

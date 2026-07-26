@@ -14,7 +14,7 @@
 
 #include "flash.h"
 #include "boot.h"
-#include "errno.h"
+#include "boot_errno.h"
 #include "compiler.h"
 #include "stm32f1xx_hal.h"
 

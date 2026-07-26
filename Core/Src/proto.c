@@ -13,7 +13,7 @@
 
 #include "proto.h"
 #include "uart.h"
-#include "errno.h"
+#include "boot_errno.h"
 #include "compiler.h"
 
 /* ── CRC-16 forward ──────────────────────────────────────────────── */

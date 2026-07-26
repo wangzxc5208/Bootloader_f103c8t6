@@ -6,7 +6,7 @@
  */
 
 #include "version.h"
-#include "errno.h"
+#include "boot_errno.h"
 
 /**
  * version_to_str - format version as "MAJOR.MINOR.PATCH"

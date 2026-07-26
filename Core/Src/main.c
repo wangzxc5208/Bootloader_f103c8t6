@@ -28,7 +28,7 @@
 #include "ota.h"
 #include "info_block.h"
 #include "version.h"
-#include "errno.h"
+#include "boot_errno.h"
 #include "compiler.h"
 
 /* Private includes ----------------------------------------------------------*/

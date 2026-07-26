@@ -22,7 +22,7 @@
 #include "info_block.h"
 #include "flash.h"
 #include "boot.h"
-#include "errno.h"
+#include "boot_errno.h"
 #include "compiler.h"
 #include "list.h"
 #include "types.h"
@@ -81,20 +81,6 @@ static int info_block_read_raw(struct flash_driver *drv, u32 copy,
 }
 
 /**
- * info_block_erase_copy - erase an info block copy
- * @drv: flash driver
- * @copy: 0 or 1
- * @return: 0 on success, negative on error
- */
-static int info_block_erase_copy(struct flash_driver *drv, u32 copy)
-{
-    u32 addr = (copy == 0) ? INFO_BLOCK_A_BASE : INFO_BLOCK_B_BASE;
-    /* Info block uses 2 pages (2KB), but we only need to erase
-     * the first page (1KB) since the struct fits in < 100 bytes */
-    return drv->erase(drv, addr, FLASH_PAGE_SIZE);
-}
-
-/**
  * info_block_write_raw - write an info block copy to Flash
  * @drv: flash driver
  * @copy: 0 or 1
@@ -107,7 +93,7 @@ static int info_block_write_raw(struct flash_driver *drv, u32 copy,
     u32 addr = (copy == 0) ? INFO_BLOCK_A_BASE : INFO_BLOCK_B_BASE;
 
     /* Erase first */
-    int ret = drv->erase(drv, addr, FLASH_PAGE_SIZE);
+    int ret = drv->erase(drv, addr, drv->get_page_size(drv));
     if (ret != E_OK)
         return ret;
 

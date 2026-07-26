@@ -14,11 +14,15 @@
 #include "types.h"
 
 /* ── Flash geometry ──────────────────────────────────────────────── */
-
-#define FLASH_BASE          0x08000000U
-#define FLASH_SIZE          (64U * 1024U)       /* 64 KB total */
-#define FLASH_PAGE_SIZE     1024U               /* 1 KB per page */
-#define FLASH_PAGE_COUNT    64U
+/*
+ * FLASH_BASE is defined by the STM32 CMSIS device header (stm32f103xb.h).
+ * FLASH_PAGE_SIZE is defined by stm32f1xx_hal_flash_ex.h (0x400 = 1024).
+ * We define only the total FLASH_SIZE which the HAL does not provide.
+ */
+#ifndef FLASH_SIZE
+#define FLASH_SIZE           (64U * 1024U)       /* 64 KB total */
+#endif
+#define BOOT_FLASH_PAGE_COUNT 64U
 
 /* ── Bootloader partition ────────────────────────────────────────── */
 

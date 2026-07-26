@@ -15,8 +15,12 @@
 
 /* ── Compiler attribute wrappers ─────────────────────────────────── */
 
+#ifndef __weak
 #define __weak          __attribute__((weak))
+#endif
+#ifndef __packed
 #define __packed        __attribute__((packed))
+#endif
 #define __aligned(x)    __attribute__((aligned(x)))
 #define __section(s)    __attribute__((section(s)))
 #define __used          __attribute__((used))
