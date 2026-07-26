@@ -162,7 +162,7 @@ class OtaGuiApp:
                    command=self._refresh_ports).pack(side=tk.LEFT, padx=4)
 
         ttk.Label(row1, text="  波特率:").pack(side=tk.LEFT, padx=(12, 0))
-        self.baud_var = tk.StringVar(value="115200")
+        self.baud_var = tk.StringVar(value="9600")
         baud_cb = ttk.Combobox(row1, textvariable=self.baud_var, width=10,
                                 values=["9600", "19200", "38400", "57600",
                                         "115200", "230400", "460800"],

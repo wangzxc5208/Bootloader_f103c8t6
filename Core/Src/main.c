@@ -119,54 +119,54 @@ int main(void)
   struct info_block ib;
   int ret = info_block_init(&ib);
   if (ret != E_OK) {
-      /* If info block is corrupted beyond recovery, enter OTA mode
-       * to allow re-flashing */
+      /* Corrupted info block — enter OTA mode for recovery */
       if (tport)
           boot_enter_ota_mode(tport);
-      /* Fall through — will loop in OTA or error handler */
   }
 
-  /* ── Boot decision logic ────────────────────────────────────────── */
-
-  bool should_enter_ota = false;
-
-  /* Check if we should enter OTA mode (wait for host command) */
-  if (tport) {
-      should_enter_ota = ota_enter_check(tport, OTA_ENTER_TIMEOUT_MS);
-  }
-
-  if (should_enter_ota) {
-      /* Host requested OTA — enter update mode */
-      boot_enter_ota_mode(tport);
-      /* Should not return */
-  }
-
-  /* ── Determine which slot to boot ───────────────────────────────── */
+  /* ── Check if any app is installed ──────────────────────────────── */
 
   const struct info_block *ib_ptr = info_block_get();
   u32 active_slot = SLOT_A;
 
   if (ib_ptr) {
       active_slot = ib_ptr->active_slot;
+  }
 
-      /* Check update status for rollback logic */
+  bool slot_a_ok = boot_validate_slot(SLOT_A);
+  bool slot_b_ok = boot_validate_slot(SLOT_B);
+
+  /* If neither slot has a valid app, enter OTA mode immediately.
+   * No timeout — just wait forever for the host to send firmware. */
+  if (!slot_a_ok && !slot_b_ok) {
+      if (tport) {
+          /* Signal to host: send a "READY" pattern */
+          static const u8 ready[] = {0xAA, 0x55, 0x80, 0x00, 0x03,
+                                     'B', 'O', 'T', 0x00, 0x00};
+          tport->send(tport, ready, sizeof(ready));
+          HAL_Delay(50);
+          boot_enter_ota_mode(tport);
+      }
+      /* No transport — just loop */
+      while (1) { HAL_Delay(1000); }
+  }
+
+  /* ── Rollback logic ─────────────────────────────────────────────── */
+
+  if (ib_ptr) {
       if (ib_ptr->update_status == INFO_STATUS_TRYING) {
           if (ib_ptr->boot_attempt >= ib_ptr->max_attempts) {
-              /* Max attempts exceeded — trigger rollback */
               struct info_block ib_mut = *ib_ptr;
               info_block_trigger_rollback(&ib_mut);
-              /* Re-read after rollback */
               ib_ptr = info_block_get();
               if (ib_ptr)
                   active_slot = ib_ptr->active_slot;
           } else {
-              /* Increment boot attempt and retry */
               struct info_block ib_mut = *ib_ptr;
               ib_mut.boot_attempt++;
               info_block_write(&ib_mut);
           }
       } else if (ib_ptr->update_status == INFO_STATUS_UPDATE_DONE) {
-          /* First boot after update — set to TRYING */
           struct info_block ib_mut = *ib_ptr;
           ib_mut.update_status = INFO_STATUS_TRYING;
           ib_mut.boot_attempt = 1;
@@ -174,25 +174,12 @@ int main(void)
       }
   }
 
-  /* Validate the slot */
-  if (!boot_validate_slot(active_slot)) {
-      /* Slot invalid — try the other slot */
-      u32 fallback = other_slot(active_slot);
-      if (boot_validate_slot(fallback)) {
-          active_slot = fallback;
-          /* Update info block to reflect the switch */
-          if (ib_ptr) {
-              struct info_block ib_mut = *ib_ptr;
-              ib_mut.active_slot = active_slot;
-              ib_mut.update_status = INFO_STATUS_VALIDATED;
-              ib_mut.boot_attempt = 0;
-              info_block_write(&ib_mut);
-          }
-      } else {
-          /* Both slots invalid — enter OTA mode as recovery */
-          if (tport)
-              boot_enter_ota_mode(tport);
-      }
+  /* ── OTA entry check (only if a valid app exists) ───────────────── */
+
+  if (tport) {
+      bool enter_ota = ota_enter_check(tport, OTA_ENTER_TIMEOUT_MS);
+      if (enter_ota)
+          boot_enter_ota_mode(tport);
   }
 
   /* ── Jump to application ────────────────────────────────────────── */
