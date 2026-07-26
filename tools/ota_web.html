@@ -360,39 +360,40 @@ async function sendFrame(cmd,data=new Uint8Array(0)){const f=buildFrame(cmd,data
    reader.read() may return many bytes at once; we must not lose
    any leftover bytes when we break after finding the sync pattern.
    Never calls reader.cancel() — that closes the ReadableStream. */
-async function recvFrame(timeoutMs=3000){
+async function recvFrame(timeoutMs=3000,_dbg){
   if(!port||!port.readable)return null;
-  // helper: pull more bytes into the ring buffer
   async function fill(ring,need,reader){
     while(ring.length<need){
       const{v,done}=await reader.read();
       if(done)break;
-      if(v)for(let b of v)ring.push(b);
+      if(v){for(let b of v)ring.push(b);if(_dbg)console.log('recvFrame read',v.length,'bytes, ring now',ring.length)}
     }
   }
-  let reader,ring=[];
+  let reader,ring=[],loops=0;
   try{
     reader=port.readable.getReader();
     while(true){
-      // scan ring for AA 55 sync
+      if(++loops>50)return null; // safety valve
       let si=-1;
       for(let i=0;i<ring.length-1;i++){if(ring[i]===SYNC0&&ring[i+1]===SYNC1){si=i;break}}
-      if(si<0){ring=ring.slice(-1);await fill(ring,2,reader);continue} // keep only last byte (might be AA)
-      // discard garbage before sync
+      if(si<0){
+        if(ring.length>1)ring=ring.slice(-1); // keep last byte only (maybe AA)
+        await fill(ring,2,reader);
+        if(_dbg)console.log('recvFrame scan: ring',ring.length>=2?'['+ring[0].toString(16)+','+ring[1].toString(16)+'...]':'['+ring+']');
+        continue;
+      }
       ring=ring.slice(si);
-      // ensure we have header (5 bytes total = 2 sync + 3 hdr)
       await fill(ring,5,reader);
       if(ring.length<5)return null;
       const cmd=ring[2],plen=(ring[3]<<8)|ring[4];
-      if(plen>MAX_PAYLOAD){ring=ring.slice(5);continue;} // bad length, skip this frame
-      // ensure we have full payload + CRC
+      if(_dbg)console.log('recvFrame got sync, cmd='+cmd.toString(16),'plen='+plen);
+      if(plen>MAX_PAYLOAD){ring=ring.slice(5);continue;}
       const total=5+plen+2;
       await fill(ring,total,reader);
       if(ring.length<total)return null;
-      // verify CRC
       const frameBytes=ring.slice(2,5+plen);
       const crcRx=(ring[5+plen]<<8)|ring[5+plen+1];
-      if(crc16(frameBytes)!==crcRx){ring=ring.slice(2);continue;} // CRC mismatch, scan again
+      if(crc16(frameBytes)!==crcRx){if(_dbg)console.log('CRC mismatch');ring=ring.slice(2);continue;}
       const payload=ring.slice(5,5+plen);
       return{cmd,payload:new Uint8Array(payload)};
     }
@@ -402,7 +403,7 @@ async function recvFrame(timeoutMs=3000){
 }
 
 async function sendCmd(cmd,data,ack=true){await sendFrame(cmd,data);if(!ack)return true;const r=await recvFrame(3000);return r&&r.cmd===RESP_ACK}
-async function ping(timeoutMs=1500){await sendFrame(CMD_PING);const r=await recvFrame(timeoutMs);return r&&r.cmd===RESP_ACK}
+async function ping(timeoutMs=1500,dbg){await sendFrame(CMD_PING);const r=await recvFrame(timeoutMs,dbg);return r&&r.cmd===RESP_ACK}
 async function getVersion(){await sendFrame(CMD_GET_VERSION);const r=await recvFrame(2000);if(r&&r.cmd===RESP_VERSION&&r.payload.length>=12){const dv=new DataView(r.payload.buffer);const pv=dv.getUint16(0,false),ma=dv.getUint16(2,false),mi=dv.getUint16(4,false),pa=dv.getUint16(6,false);return`v${ma}.${mi}.${pa} (proto ${pv>>8}.${pv&0xFF})`}return null}
 
 async function detectOnce(){
@@ -411,7 +412,7 @@ async function detectOnce(){
   log('未检测到设备 — 请确保 MCU 已上电并进入 OTA 模式','warn');return false;
 }
 async function doDetect(){if(!port)return;log('重新检测…','dim');setDeviceStatus(true);await detectOnce()}
-async function doPing(){if(!port)return;log('Ping…','dim');const ok=await ping();log(ok?'Pong!':'无响应',ok?'ok':'fail')}
+async function doPing(){if(!port)return;log('Ping…','dim');const ok=await ping(500,true);log(ok?'Pong!':'无响应 (已发7字节, 未收到回复)',ok?'ok':'fail')}
 async function doReset(){if(!port)return;log('发送复位…','dim');await sendFrame(CMD_RESET);log('设备应已复位','ok')}
 
 /* ═══════════════════════════════════════════════════════════════════
