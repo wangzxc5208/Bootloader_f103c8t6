@@ -53,7 +53,7 @@ extern "C" {
 void Error_Handler(void);
 
 /* USART2 handle — accessible from ISR in stm32f1xx_it.c */
-extern UART_HandleTypeDef huart2;
+extern UART_HandleTypeDef *g_huart2;
 
 /* USER CODE BEGIN EFP */
 

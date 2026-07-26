@@ -140,10 +140,11 @@ int main(void)
    * No timeout — just wait forever for the host to send firmware. */
   if (!slot_a_ok && !slot_b_ok) {
       if (tport) {
-          /* Signal to host: send a "READY" pattern */
-          static const u8 ready[] = {0xAA, 0x55, 0x80, 0x00, 0x03,
-                                     'B', 'O', 'T', 0x00, 0x00};
-          tport->send(tport, ready, sizeof(ready));
+          /* Signal to host: send a valid "BOT" ACK frame */
+          u8 ready[PROTO_MAX_FRAME];
+          int rlen = proto_build_frame(0x80, (const u8 *)"BOT", 3, ready);
+          if (rlen > 0)
+              tport->send(tport, ready, (u32)rlen);
           HAL_Delay(50);
           boot_enter_ota_mode(tport);
       }

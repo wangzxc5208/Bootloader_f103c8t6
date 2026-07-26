@@ -31,11 +31,12 @@ struct uart_priv {
     volatile bool       rx_overflow;
 };
 
-/* Ensure huart2 is accessible from stm32f1xx_it.c */
-UART_HandleTypeDef huart2;
+/* The ACTIVE UART handle — shared between ISR and driver.
+ * Set by uart_init before any UART operations, used by
+ * USART2_IRQHandler() in stm32f1xx_it.c */
+UART_HandleTypeDef *g_huart2;
 
 /* Static pointer to transport — used by HAL_UART_RxCpltCallback */
-/* (STM32F1 HAL UART_HandleTypeDef has no user_data field) */
 static struct transport *g_uart2_transport;
 
 /* ── Ring buffer helpers ─────────────────────────────────────────── */
@@ -83,7 +84,7 @@ static void rx_buf_put_isr(struct uart_priv *p, u8 byte)
  */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *handle)
 {
-    if (handle == &huart2 && g_uart2_transport) {
+    if (g_uart2_transport && handle == g_huart2) {
         struct uart_priv *p = g_uart2_transport->priv;
         rx_buf_put_isr(p, p->rx_byte);
         /* Re-arm for next byte */
@@ -138,14 +139,12 @@ static int uart_init(struct transport *t)
     h->Init.HwFlowCtl  = BOOT_UART_FLOWCTRL;
     h->Init.OverSampling = UART_OVERSAMPLING_16;
 
-    /* Store transport pointer for ISR callback access */
+    /* Store transport & handle pointer for ISR access */
     g_uart2_transport = t;
+    g_huart2 = h;           /* Use the SAME handle for ISR and driver */
 
     if (HAL_UART_Init(h) != HAL_OK)
         return E_IO;
-
-    /* Copy to global handle for ISR access */
-    huart2 = *h;
 
     /* Start interrupt-based RX (one byte at a time) */
     HAL_UART_Receive_IT(h, (u8 *)&p->rx_byte, 1);
