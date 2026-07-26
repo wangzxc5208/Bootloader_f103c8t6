@@ -345,23 +345,45 @@ async function toggleConnect() {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+/**
+ * Read from a Web Serial reader with a REAL timeout.
+ * reader.read() blocks indefinitely; Promise.race cancels the
+ * reader if no data arrives within timeoutMs.
+ */
+async function readWithTimeout(reader, timeoutMs) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+  });
+  try {
+    const result = await Promise.race([reader.read(), timeout]);
+    clearTimeout(timer);
+    return result;
+  } catch (e) {
+    clearTimeout(timer);
+    await reader.cancel().catch(() => {});
+    throw e;
+  }
+}
+
 /** Drain any pending RX data (garbage from MCU power-on) */
 async function flushPort() {
   if (!port || !port.readable) return;
+  let reader;
   try {
-    const reader = port.readable.getReader();
+    reader = port.readable.getReader();
     let drained = 0;
-    const t0 = Date.now();
-    while (Date.now() - t0 < 150) {
+    while (true) {
       try {
-        const { value, done } = await reader.read();
+        const { value, done } = await readWithTimeout(reader, 100);
         if (done || !value || value.length === 0) break;
         drained += value.length;
-      } catch (e) { break; }
+      } catch (e) { break; } // timeout → no more data
     }
-    try { reader.releaseLock(); } catch (e) {}
     if (drained > 0) log(`[系统] 已丢弃 ${drained} 字节噪声数据`, 'dim');
-  } catch (e) {}
+  } catch (e) {} finally {
+    try { reader && reader.releaseLock(); } catch (e) {}
+  }
 }
 
 /** Try to detect bootloader with aggressive retries during the 3s OTA window */
@@ -402,38 +424,42 @@ async function sendFrame(cmd, data = new Uint8Array(0)) {
 
 async function recvFrame(timeoutMs = 3000) {
   if (!port || !port.readable) return null;
-  const reader = port.readable.getReader();
-  const t0 = Date.now();
+  let reader;
+  const deadline = Date.now() + timeoutMs;
   let buf = [];
   try {
-    // Phase 1: find sync
-    while (Date.now() - t0 < timeoutMs) {
+    reader = port.readable.getReader();
+    // Phase 1: find sync (with real timeout per read)
+    while (Date.now() < deadline) {
+      let value;
       try {
-        const { value, done } = await reader.read();
-        if (done) return null;
-        for (let b of value) {
-          if (buf.length === 0 && b === SYNC0) {
-            buf.push(b);
-          } else if (buf.length === 1) {
-            if (b === SYNC1) { buf.push(b); break; }
-            else if (b === SYNC0) buf = [b];
-            else buf = [];
-          }
+        const result = await readWithTimeout(reader, Math.max(50, deadline - Date.now()));
+        if (result.done) return null;
+        value = result.value;
+      } catch (e) { return null; } // timeout
+      if (!value) continue;
+      for (let b of value) {
+        if (buf.length === 0 && b === SYNC0) {
+          buf.push(b);
+        } else if (buf.length === 1) {
+          if (b === SYNC1) { buf.push(b); break; }
+          else if (b === SYNC0) buf = [b];
+          else buf = [];
         }
-        if (buf.length === 2) break; // Got sync
-      } catch (e) { break; }
+      }
+      if (buf.length === 2) break; // Got sync
     }
     if (buf.length !== 2) return null;
 
     // Phase 2: read header (3 bytes)
-    const hdr = await readBytes(reader, 3, timeoutMs - (Date.now() - t0));
+    const hdr = await readBytes(reader, 3, deadline - Date.now());
     if (!hdr || hdr.length < 3) return null;
     buf.push(...hdr);
     const cmd = hdr[0];
     const plen = (hdr[1] << 8) | hdr[2];
 
     // Phase 3: read payload + CRC
-    const tail = await readBytes(reader, plen + 2, timeoutMs - (Date.now() - t0));
+    const tail = await readBytes(reader, plen + 2, deadline - Date.now());
     if (!tail || tail.length < plen + 2) return null;
     buf.push(...tail);
 
@@ -445,18 +471,21 @@ async function recvFrame(timeoutMs = 3000) {
 
     return { cmd, payload: new Uint8Array(payload) };
   } finally {
-    try { reader.releaseLock(); } catch (e) {}
+    try { reader && reader.releaseLock(); } catch (e) {}
   }
 }
 
 async function readBytes(reader, count, timeoutMs) {
+  if (timeoutMs <= 0) return [];
   const result = [];
-  const t0 = Date.now();
-  while (result.length < count && Date.now() - t0 < timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (result.length < count && Date.now() < deadline) {
     try {
-      const { value, done } = await reader.read();
+      const { value, done } = await readWithTimeout(reader, Math.max(50, deadline - Date.now()));
       if (done) break;
-      for (let b of value) { result.push(b); if (result.length >= count) break; }
+      if (value) {
+        for (let b of value) { result.push(b); if (result.length >= count) break; }
+      }
     } catch (e) { break; }
   }
   return result;

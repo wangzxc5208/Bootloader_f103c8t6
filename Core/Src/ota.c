@@ -231,36 +231,33 @@ static void ota_handle_activate(struct ota_ctx *ctx)
 
 static int ota_handle_get_status(struct ota_ctx *ctx, struct transport *t)
 {
-    struct proto_status_resp resp;
-
+    u8 st;
     switch (ctx->state) {
-    case OTA_IDLE:
-        resp.state = PSTATE_IDLE;
-        break;
-    case OTA_RECEIVING:
-        resp.state = PSTATE_RECEIVING;
-        break;
-    case OTA_VERIFYING:
-        resp.state = PSTATE_VERIFYING;
-        break;
-    case OTA_COMPLETE:
-        resp.state = PSTATE_COMPLETE;
-        break;
-    case OTA_ERROR:
-        resp.state = PSTATE_ERROR;
-        break;
-    default:
-        resp.state = PSTATE_IDLE;
-        break;
+    case OTA_RECEIVING: st = PSTATE_RECEIVING; break;
+    case OTA_VERIFYING: st = PSTATE_VERIFYING;  break;
+    case OTA_COMPLETE:  st = PSTATE_COMPLETE;   break;
+    case OTA_ERROR:     st = PSTATE_ERROR;      break;
+    default:            st = PSTATE_IDLE;       break;
     }
 
-    resp.progress      = ota_get_progress(ctx);
-    resp.bytes_written = ctx->bytes_written;
-    resp.total_size    = ctx->image_size;
-    resp.last_error    = ctx->last_error;
+    u8 progress = ota_get_progress(ctx);
+    u32 bw = ctx->bytes_written;
+    u32 ts = ctx->image_size;
+    u32 le = ctx->last_error;
+
+    /* Encode in big-endian — consistent with protocol spec */
+    u8 be[14];
+    be[0]  = st;
+    be[1]  = progress;
+    be[2]  = (u8)(bw >> 24); be[3] = (u8)(bw >> 16);
+    be[4]  = (u8)(bw >> 8);  be[5] = (u8)(bw);
+    be[6]  = (u8)(ts >> 24); be[7] = (u8)(ts >> 16);
+    be[8]  = (u8)(ts >> 8);  be[9] = (u8)(ts);
+    be[10] = (u8)(le >> 24); be[11] = (u8)(le >> 16);
+    be[12] = (u8)(le >> 8);  be[13] = (u8)(le);
 
     u8 frame_buf[PROTO_MAX_FRAME];
-    int size = proto_build_frame(RESP_STATUS, (u8 *)&resp, sizeof(resp), frame_buf);
+    int size = proto_build_frame(RESP_STATUS, be, sizeof(be), frame_buf);
     if (size < 0)
         return size;
 
@@ -271,19 +268,24 @@ static int ota_handle_get_status(struct ota_ctx *ctx, struct transport *t)
 
 static int ota_handle_get_version(struct transport *t)
 {
-    struct proto_version_resp resp;
-
-    resp.proto_version = PROTO_VERSION;
-    resp.boot_major    = 1;
-    resp.boot_minor    = 0;
-    resp.boot_patch    = 0;
-    resp.capabilities[0] = 0x01; /* Supports OTA */
-    resp.capabilities[1] = 0x00; /* No rollback in simplified version */
-    resp.capabilities[2] = 0;
-    resp.capabilities[3] = 0;
+    /*
+     * Encode in big-endian — consistent with the rest of the protocol.
+     * The struct is little-endian on ARM; we pack bytes manually so the
+     * host can decode with a single >HHHH unpack regardless of platform.
+     */
+    u8 be[12];
+    be[0] = (u8)(PROTO_VERSION >> 8);       /* proto_version MSB */
+    be[1] = (u8)(PROTO_VERSION & 0xFF);      /* proto_version LSB */
+    be[2] = 0; be[3] = 1;                    /* boot_major = 1     */
+    be[4] = 0; be[5] = 0;                    /* boot_minor = 0     */
+    be[6] = 0; be[7] = 0;                    /* boot_patch = 0     */
+    be[8] = 0x01;                             /* capabilities[0]   */
+    be[9] = 0x00;                             /* capabilities[1]   */
+    be[10] = 0;                               /* capabilities[2]   */
+    be[11] = 0;                               /* capabilities[3]   */
 
     u8 frame_buf[PROTO_MAX_FRAME];
-    int size = proto_build_frame(RESP_VERSION, (u8 *)&resp, sizeof(resp), frame_buf);
+    int size = proto_build_frame(RESP_VERSION, be, sizeof(be), frame_buf);
     if (size < 0)
         return size;
 
