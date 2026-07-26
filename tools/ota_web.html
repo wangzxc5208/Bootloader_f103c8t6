@@ -241,6 +241,7 @@ async function reqPort(){try{let p=await navigator.serial.requestPort();await re
 async function toggleConnect(){
   // ── Disconnect ──
   if(port&&port.readable){
+    stopDetectLoop();
     if(reader){try{reader.cancel()}catch(e){}reader=null}
     try{await port.close()}catch(e){}port=null;ring=[];
     log('已断开连接','dim');setDev(false);setBtns();return;
@@ -265,11 +266,7 @@ async function toggleConnect(){
   await sleep(300);
 
   log('已连接 @ '+baud+' baud','ok');setBtns();setDev(true);
-  log('等待 Bootloader（请上电 MCU）…','dim');
-
-  // Try to detect
-  let ok=await tryPing();
-  if(ok){let v=await tryVersion();setDev(true,v||'已连接');log('Bootloader '+(v||'在线'),'ok')}
+  startDetectLoop(); // continuous background detection
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -322,22 +319,18 @@ function extract(){
 }
 
 // Send a frame, then wait for a response frame.
-async function txrx(cmd,data=new Uint8Array(0),timeoutMs=2000){
-  // Discard any stale data from previous exchanges
-  ring=[];
-  // Send
+async function txrx(cmd,data=new Uint8Array(0),timeoutMs=3000){
+  ring=[]; // only accept response to THIS request
   let f=bf(cmd,data);
   let w=port.writable.getWriter();
   try{await w.write(f)}finally{try{w.releaseLock()}catch(e){}}
-  await sleep(20); // let TX finish at 9600 baud
+  // 9600 baud: each byte ~1ms. Wait for TX to finish plus MCU processing time.
+  await sleep(50);
 
-  // Receive: try pull+extract until deadline
   let dl=Date.now()+timeoutMs;
   while(Date.now()<dl){
-    let r=extract();
-    if(r)return r;
-    let ok=await pull(ring.length+1);
-    if(!ok)return null;
+    let r=extract();if(r)return r;
+    let ok=await pull(ring.length+1);if(!ok)return null;
   }
   return null;
 }
@@ -345,9 +338,26 @@ async function txrx(cmd,data=new Uint8Array(0),timeoutMs=2000){
 async function tryPing(){let r=await txrx(CP,new Uint8Array(0),500);return r&&r.cmd===RA}
 async function tryVersion(){let r=await txrx(CVV,new Uint8Array(0),800);if(r&&r.cmd===RV&&r.payload.length>=12){let dv=new DataView(r.payload.buffer);let pv=dv.getUint16(0,false),ma=dv.getUint16(2,false),mi=dv.getUint16(4,false),pa=dv.getUint16(6,false);return'v'+ma+'.'+mi+'.'+pa+' (proto '+((pv>>8)&0xFF)+'.'+(pv&0xFF)+')'}return null}
 
-async function doDetect(){if(!port)return;log('重新检测…','dim');setDev(true);let ok=await tryPing();if(ok){let v=await tryVersion();setDev(true,v||'已连接');log('Bootloader '+(v||'在线'),'ok')}else{log('未检测到 — 请确保 MCU 在 OTA 窗口内上电','warn')}}
-async function doPing(){if(!port)return;log('Ping…','dim');let ok=await tryPing();log(ok?'Pong!':'无响应',ok?'ok':'fail')}
-async function doReset(){if(!port)return;log('复位…','dim');let f=bf(CRS);let w=port.writable.getWriter();await w.write(f);await sleep(30);try{w.releaseLock()}catch(e){}log('已发送复位命令','ok')}
+// ── Continuous background detection ──────────────────────────────
+let detectTimer=null,detectRunning=false;
+async function startDetectLoop(){
+  if(detectRunning||!port)return;
+  detectRunning=true;
+  log('持续检测设备…（请上电 MCU）','dim');
+  while(detectRunning&&port&&port.readable){
+    let ok=await tryPing();
+    if(ok){
+      let v=await tryVersion();setDev(true,v||'已连接');
+      log('✓ Bootloader '+(v||'在线'),'ok');detectRunning=false;return;
+    }
+    await sleep(500);
+  }
+  detectRunning=false;
+}
+function stopDetectLoop(){detectRunning=false;if(detectTimer)clearTimeout(detectTimer)}
+async function doDetect(){if(!port)return;stopDetectLoop();setDev(true);log('重新检测…','dim');startDetectLoop()}
+async function doPing(){if(!port)return;stopDetectLoop();log('Ping…','dim');let ok=await tryPing();log(ok?'Pong!':'无响应',ok?'ok':'fail');startDetectLoop()}
+async function doReset(){if(!port)return;stopDetectLoop();log('复位…','dim');let f=bf(CRS);let w=port.writable.getWriter();await w.write(f);await sleep(30);try{w.releaseLock()}catch(e){}log('已发送复位命令','ok');startDetectLoop()}
 
 // ═══════════════════════════════════════════════════════════════════
 // File handling
@@ -370,6 +380,7 @@ fz.addEventListener('drop',e=>{e.preventDefault();fz.classList.remove('drag');le
 // ═══════════════════════════════════════════════════════════════════
 async function doUpdate(){
   if(updating||!firmware||!port)return;
+  stopDetectLoop();
   updating=true;$('bStart').disabled=true;$('bStart').innerHTML='<span class="spin"></span> 升级中…';
   $('pCard').classList.add('on');logEl.innerHTML='';setProg(0,'准备中');[1,2,3,4].forEach(i=>stepOn(i,''));
 
@@ -396,9 +407,9 @@ async function doUpdate(){
     while(off<total){
       let end=Math.min(off+cs,total),ch=fw.slice(off,end),p=new Uint8Array(4+ch.length),dv=new DataView(p.buffer);
       dv.setUint32(0,off,false);p.set(ch,4);
-      r=await txrx(CD,p,2000);
+      r=await txrx(CD,p,5000);
       if(r&&r.cmd===RA){off=end;let pct=Math.round(off*100/total);setProg(pct,'发送 '+off.toLocaleString()+'/'+total.toLocaleString());errs=0}
-      else{errs++;if(errs>3){log('✗ 发送失败 @ '+off,'fail');stepOn(2,'err');return}log('  重试 offset='+off+'…','warn');await sleep(200)}
+      else{errs++;if(errs>5){log('✗ 发送失败 @ '+off,'fail');stepOn(2,'err');return}log('  重试 offset='+off+' ('+errs+'/5)…','warn');await sleep(300)}
     }
     log('✓ 发送完成 ('+off.toLocaleString()+' B)','ok');stepOn(2,'done');
 
