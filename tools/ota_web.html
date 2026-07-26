@@ -342,33 +342,81 @@ async function toggleConnect(){
     return;
   }
   port=sp;
-  log(`已连接 @ ${baud} baud`,'ok');setButtons();setDeviceStatus(true);
-  log('等待 Bootloader（请给 MCU 上电）…','dim');await detectBootloader(10)
+  log(`已连接 @ ${baud} baud`,'ok');setButtons();setDeviceStatus(true);await detectOnce()
 }
 function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
 
 /* ═══════════════════════════════════════════════════════════════════
-   Protocol I/O (with real timeouts)
+   Protocol I/O
+   NOTE: Web Serial reader.read() blocks with no native timeout.
+   Never call reader.cancel() — it closes the entire ReadableStream.
+   Sync-pattern detection naturally skips garbage, so no flush needed.
    ═══════════════════════════════════════════════════════════════════ */
-async function readWithTimeout(reader,ms){let t;const to=new Promise((_,r)=>{t=setTimeout(()=>r(new Error('timeout')),ms)});try{const r=await Promise.race([reader.read(),to]);clearTimeout(t);return r}catch(e){clearTimeout(t);await reader.cancel().catch(()=>{});throw e}}
-async function flushPort(){if(!port||!port.readable)return;let r;try{r=port.readable.getReader();let d=0;while(true){try{const{v,done}=await readWithTimeout(r,100);if(done||!v||v.length===0)break;d+=v.length}catch(e){break}}if(d>0)log(`丢弃 ${d} 字节噪声`,'dim')}catch(e){}finally{try{r&&r.releaseLock()}catch(e){}}}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+
 async function sendFrame(cmd,data=new Uint8Array(0)){const f=buildFrame(cmd,data),w=port.writable.getWriter();try{await w.write(f)}finally{w.releaseLock()}}
-async function recvFrame(ms=3000){if(!port||!port.readable)return null;let r;const dl=Date.now()+ms,b=[];try{r=port.readable.getReader();
-  while(Date.now()<dl){let v;try{const re=await readWithTimeout(r,Math.max(50,dl-Date.now()));if(re.done)return null;v=re.value}catch(e){return null}
-    if(!v)continue;for(let x of v){if(b.length===0&&x===SYNC0)b.push(x);else if(b.length===1){if(x===SYNC1){b.push(x);break}else if(x===SYNC0)b=[x];else b=[]}}if(b.length===2)break}
-  if(b.length!==2)return null;
-  const h=await readBytes(r,3,dl-Date.now());if(!h||h.length<3)return null;b.push(...h);const cmd=h[0],plen=(h[1]<<8)|h[2];
-  const t=await readBytes(r,plen+2,dl-Date.now());if(!t||t.length<plen+2)return null;b.push(...t);
-  const cRx=(b[b.length-2]<<8)|b[b.length-1],pay=b.slice(5,5+plen);if(crc16(b.slice(2,5+plen))!==cRx)return null;
-  return{cmd,payload:new Uint8Array(pay)}}finally{try{r&&r.releaseLock()}catch(e){}}}
-async function readBytes(reader,count,ms){if(ms<=0)return[];const r=[],dl=Date.now()+ms;while(r.length<count&&Date.now()<dl){try{const{v,done}=await readWithTimeout(reader,Math.max(50,dl-Date.now()));if(done)break;if(v)for(let b of v){r.push(b);if(r.length>=count)break}}catch(e){break}}return r}
+
+/* recvFrame — blocking read.  MCU responds in ~20ms when online so
+   reader.read() returns fast.  Sync detection skips any noise bytes.
+   Never calls reader.cancel() — that closes the whole ReadableStream. */
+async function recvFrame(timeoutMs=3000){
+  if(!port||!port.readable)return null;
+  let reader,buf=[];
+  try{
+    reader=port.readable.getReader();
+    // Phase 1: scan for sync bytes AA 55
+    while(buf.length<2){
+      const{v,done}=await reader.read();
+      if(done)return null;
+      if(!v)continue;
+      for(let b of v){
+        if(buf.length===0&&b===SYNC0)buf.push(b);
+        else if(buf.length===1){
+          if(b===SYNC1){buf.push(b);break}
+          else if(b===SYNC0)buf=[b];
+          else buf=[];
+        }
+      }
+    }
+    // Phase 2: read header (cmd + len_hi + len_lo = 3 bytes)
+    for(let i=0;i<3;i++){
+      const{v,done}=await reader.read();
+      if(done)return null;
+      if(v)for(let b of v){buf.push(b);if(buf.length>=5)break}
+    }
+    if(buf.length<5)return null;
+    const cmd=buf[2],plen=(buf[3]<<8)|buf[4];
+    if(plen>MAX_PAYLOAD)return null;
+    // Phase 3: read payload + CRC
+    let tail=[],need=plen+2;
+    while(tail.length<need){
+      const{v,done}=await reader.read();
+      if(done)break;
+      if(v)for(let b of v){tail.push(b);if(tail.length>=need)break}
+    }
+    if(tail.length<need)return null;
+    buf=buf.concat(tail);
+    // Verify CRC (over cmd+len+payload, big-endian CRC at end)
+    const crcRx=(buf[buf.length-2]<<8)|buf[buf.length-1];
+    const payload=buf.slice(5,5+plen);
+    if(crc16(buf.slice(2,5+plen))!==crcRx)return null;
+    return{cmd,payload:new Uint8Array(payload)};
+  }finally{
+    try{reader&&reader.releaseLock()}catch(e){}
+  }
+}
+
 async function sendCmd(cmd,data,ack=true){await sendFrame(cmd,data);if(!ack)return true;const r=await recvFrame(3000);return r&&r.cmd===RESP_ACK}
-async function ping(ms=1500){await sendFrame(CMD_PING);const r=await recvFrame(ms);return r&&r.cmd===RESP_ACK}
-async function quickPing(){return await ping(200)}
+async function ping(timeoutMs=1500){await sendFrame(CMD_PING);const r=await recvFrame(timeoutMs);return r&&r.cmd===RESP_ACK}
 async function getVersion(){await sendFrame(CMD_GET_VERSION);const r=await recvFrame(2000);if(r&&r.cmd===RESP_VERSION&&r.payload.length>=12){const dv=new DataView(r.payload.buffer);const pv=dv.getUint16(0,false),ma=dv.getUint16(2,false),mi=dv.getUint16(4,false),pa=dv.getUint16(6,false);return`v${ma}.${mi}.${pa} (proto ${pv>>8}.${pv&0xFF})`}return null}
-async function detectBootloader(s){const dl=Date.now()+s*1000;let a=0;while(Date.now()<dl){a++;await flushPort();const ok=await quickPing();if(ok){const v=await getVersion();setDeviceStatus(true,v||'已连接');log(`Bootloader ${v||'在线'} (第 ${a} 次)`,'ok');return true}await sleep(50)}log('未检测到设备 — 请给 MCU 上电后点「重新检测」','warn');return false}
-async function doDetect(){if(!port)return;log('重新检测…','dim');setDeviceStatus(true);await detectBootloader(5)}
-async function doPing(){if(!port)return;log('Ping…','dim');await flushPort();const ok=await ping();log(ok?'Pong!':'无响应',ok?'ok':'fail')}
+
+async function detectOnce(){
+  const ok=await ping(500); // MCU responds in <20ms if in OTA mode
+  if(ok){const v=await getVersion();setDeviceStatus(true,v||'已连接');log(`Bootloader ${v||'在线'}`,'ok');return true}
+  log('未检测到设备 — 请确保 MCU 已上电并进入 OTA 模式','warn');return false;
+}
+async function doDetect(){if(!port)return;log('重新检测…','dim');setDeviceStatus(true);await detectOnce()}
+async function doPing(){if(!port)return;log('Ping…','dim');const ok=await ping();log(ok?'Pong!':'无响应',ok?'ok':'fail')}
 async function doReset(){if(!port)return;log('发送复位…','dim');await sendFrame(CMD_RESET);log('设备应已复位','ok')}
 
 /* ═══════════════════════════════════════════════════════════════════
