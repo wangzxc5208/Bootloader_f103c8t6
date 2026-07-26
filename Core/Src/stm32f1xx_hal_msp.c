@@ -77,9 +77,6 @@ void HAL_MspInit(void)
 
   /* USER CODE BEGIN MspInit 1 */
 
-  /* USART2 interrupt init */
-  HAL_NVIC_SetPriority(USART2_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(USART2_IRQn);
   /* USER CODE END MspInit 1 */
 }
 

@@ -91,6 +91,33 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *handle)
     }
 }
 
+/* ── HAL MSP callbacks ──────────────────────────────────────────── */
+
+/**
+ * HAL_UART_MspInit - low-level UART hardware init (clock enable)
+ *
+ * Called by HAL_UART_Init().  The GPIO pins (PA2/PA3) are already
+ * configured in MX_GPIO_Init().
+ */
+void HAL_UART_MspInit(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART2) {
+        __HAL_RCC_USART2_CLK_ENABLE();
+        __HAL_RCC_GPIOA_CLK_ENABLE();
+
+        /* USART2 interrupt */
+        HAL_NVIC_SetPriority(USART2_IRQn, 0, 0);
+        HAL_NVIC_EnableIRQ(USART2_IRQn);
+    }
+}
+
+void HAL_UART_MspDeInit(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART2) {
+        __HAL_RCC_USART2_CLK_DISABLE();
+    }
+}
+
 /* ── Transport ops ───────────────────────────────────────────────── */
 
 static int uart_init(struct transport *t)

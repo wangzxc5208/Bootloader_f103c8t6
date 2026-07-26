@@ -102,7 +102,7 @@
 
 /* ── UART configuration ──────────────────────────────────────────── */
 
-#define BOOT_UART_BAUDRATE    115200U
+#define BOOT_UART_BAUDRATE    9600U
 #define BOOT_UART_DATABITS    UART_WORDLENGTH_8B
 #define BOOT_UART_STOPBITS    UART_STOPBITS_1
 #define BOOT_UART_PARITY      UART_PARITY_NONE
