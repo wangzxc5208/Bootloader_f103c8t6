@@ -331,9 +331,9 @@ async function toggleConnect() {
     log(`[系统] 已连接 @ ${baud} baud`, 'ok');
     setButtons();
 
-    // Auto-detect with retries (MCU may not be powered yet)
-    log('[→] 等待 Bootloader...', 'dim');
-    await detectBootloader(5); // retry up to 5 times
+    // Auto-detect with fast retry loop (MCU OTA window is only 3s, ping every 200ms)
+    log('[→] 等待 Bootloader (请给 MCU 上电)...', 'dim');
+    await detectBootloader(10); // keep trying for 10 seconds
   } catch (e) {
     log(`[系统] 连接失败: ${e}`, 'fail');
   }
@@ -364,20 +364,21 @@ async function flushPort() {
   } catch (e) {}
 }
 
-/** Try to detect bootloader with retries, flushing noise before each attempt */
-async function detectBootloader(maxRetries) {
-  for (let i = 0; i < maxRetries; i++) {
+/** Try to detect bootloader with aggressive retries during the 3s OTA window */
+async function detectBootloader(totalTimeoutSec) {
+  const deadline = Date.now() + totalTimeoutSec * 1000;
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    attempt++;
     await flushPort();
-    const ok = await ping();
+    // quickPing: 200ms timeout — MCU responds instantly if in OTA mode
+    const ok = await quickPing();
     if (ok) {
-      log('[✓] Bootloader 在线', 'ok');
+      log(`[✓] Bootloader 在线 (第 ${attempt} 次尝试)`, 'ok');
       try { await getVersion(); } catch (e) {}
       return true;
     }
-    if (i < maxRetries - 1) {
-      log(`  未响应, ${maxRetries - i - 1} 秒后重试...`, 'dim');
-      await sleep(1000);
-    }
+    await sleep(50); // tight: ~250ms per attempt → ~12 pings in 3s window
   }
   log('[⚠] 未检测到 Bootloader — 请给 MCU 上电后点「重新检测」', 'warn');
   return false;
@@ -468,10 +469,15 @@ async function sendCmd(cmd, data, expectAck = true) {
   return r && r.cmd === RESP_ACK;
 }
 
-async function ping() {
+async function ping(timeoutMs = 1500) {
   await sendFrame(CMD_PING, new Uint8Array(0));
-  const r = await recvFrame(1500);
+  const r = await recvFrame(timeoutMs);
   return r && r.cmd === RESP_ACK;
+}
+
+/** Quick ping with short timeout — for fast detection loops */
+async function quickPing() {
+  return await ping(200);
 }
 
 async function getVersion() {
