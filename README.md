@@ -172,9 +172,13 @@ bootloader 跳转前已切回 HSI 8MHz，App 从干净状态启动，`SystemCloc
 
 ## 分支
 
+> **本分支 (`main`) 带魔数校验** — App 必须在 `0x08004200` 处放置 `0xCAFEBABE` 才能启动。\
+> 如果不需要魔数校验，切换至 [`no-magic-check`](../../tree/no-magic-check) 分支。
+
 | 分支 | 说明 |
 |------|------|
-| `main` | **简化版** — 单分区 USART 下载 + 环境清理 |
+| `main` | **简化版（带魔数）** — 单分区 + 魔数 `0xCAFEBABE` 校验 |
+| `no-magic-check` | **简化版（无魔数）** — 单分区，去掉魔数，向量表合规即启动 |
 | `legacy-ab` | 完整版 — A/B 双分区 + 版本回滚 + Info Block |
 
 ## 代码风格
