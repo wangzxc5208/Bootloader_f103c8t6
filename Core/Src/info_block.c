@@ -29,7 +29,7 @@
 
 /* ── CRC forward declarations ────────────────────────────────────── */
 
-extern u32 crc32_calc(const u8 *data, u32 len, u32 crc);
+extern u16 crc16_calc(const u8 *data, u32 len, u16 crc);
 
 /* ── Cached info block ───────────────────────────────────────────── */
 
@@ -40,17 +40,17 @@ static u32               g_ib_copy;      /* Which copy is active (0 or 1) */
 /* ── Internal helpers ────────────────────────────────────────────── */
 
 /**
- * info_block_crc - compute CRC over an info block
+ * info_block_crc - compute CRC-16 over an info block
  * @ib: info block to compute CRC for
- * @return: CRC-32 value
+ * @return: CRC-16 value
  *
  * The ib->crc field is zeroed during computation.
  */
-static u32 info_block_calc_crc(const struct info_block *ib)
+static u16 info_block_calc_crc(const struct info_block *ib)
 {
     struct info_block tmp = *ib;
     tmp.crc = 0;
-    return crc32_calc((const u8 *)&tmp, sizeof(tmp), 0xFFFFFFFFU);
+    return crc16_calc((const u8 *)&tmp, sizeof(tmp), 0x0000);
 }
 
 /**
@@ -62,8 +62,8 @@ static bool info_block_validate(const struct info_block *ib)
 {
     if (ib->magic != INFO_MAGIC)
         return false;
-    u32 computed = info_block_calc_crc(ib);
-    return computed == ib->crc;
+    u16 computed = info_block_calc_crc(ib);
+    return computed == (u16)ib->crc;
 }
 
 /**

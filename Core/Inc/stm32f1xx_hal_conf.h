@@ -71,11 +71,11 @@
 
 #define HAL_CORTEX_MODULE_ENABLED
 #define HAL_CORTEX_MODULE_ENABLED
-#define HAL_DMA_MODULE_ENABLED
+#define HAL_DMA_MODULE_ENABLED     /* type needed by UART struct, code stripped by gc-sections */
 #define HAL_FLASH_MODULE_ENABLED
-#define HAL_EXTI_MODULE_ENABLED
+/* #define HAL_EXTI_MODULE_ENABLED  -- not used by bootloader */
 #define HAL_GPIO_MODULE_ENABLED
-#define HAL_PWR_MODULE_ENABLED
+/* #define HAL_PWR_MODULE_ENABLED   -- not used by bootloader */
 #define HAL_RCC_MODULE_ENABLED
 #define HAL_UART_MODULE_ENABLED
 #define HAL_USART_MODULE_ENABLED
