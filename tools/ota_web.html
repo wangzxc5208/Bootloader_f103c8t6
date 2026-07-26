@@ -347,7 +347,7 @@ async function tryVersion(){let r=await txrx(CVV,new Uint8Array(0),800);if(r&&r.
 
 async function doDetect(){if(!port)return;log('重新检测…','dim');setDev(true);let ok=await tryPing();if(ok){let v=await tryVersion();setDev(true,v||'已连接');log('Bootloader '+(v||'在线'),'ok')}else{log('未检测到 — 请确保 MCU 在 OTA 窗口内上电','warn')}}
 async function doPing(){if(!port)return;log('Ping…','dim');let ok=await tryPing();log(ok?'Pong!':'无响应',ok?'ok':'fail')}
-async function doReset(){if(!port)return;log('复位…','dim');let f=bf(CRS);let w=port.writable.getWriter();try{await w.write(f)}finally{try{w.releaseLock()}catch(e){}}log('已发送复位命令','ok')}
+async function doReset(){if(!port)return;log('复位…','dim');let f=bf(CRS);let w=port.writable.getWriter();await w.write(f);await sleep(30);try{w.releaseLock()}catch(e){}log('已发送复位命令','ok')}
 
 // ═══════════════════════════════════════════════════════════════════
 // File handling
@@ -410,7 +410,7 @@ async function doUpdate(){
 
     // 5. Activate
     stepOn(4,'act');log('→ 激活…','dim');setProg(100,'激活中…');
-    let f=bf(CA);let w=port.writable.getWriter();try{await w.write(f)}finally{try{w.releaseLock()}catch(e){}}
+    let f=bf(CA);let w=port.writable.getWriter();await w.write(f);await sleep(50);try{w.releaseLock()}catch(e){}
     await sleep(300);
     log('');log('═'.repeat(40),'ok');log('  ✓ 升级完成！设备正在重启…','ok');log('  新版本 v'+m0+'.'+m1+'.'+m2,'ok');log('═'.repeat(40),'ok');
     stepOn(4,'done');setProg(100,'完成 ✓');
