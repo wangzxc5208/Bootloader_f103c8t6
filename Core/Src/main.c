@@ -93,11 +93,13 @@ int main(void)
 /**
  * boot_validate_app - check if a valid application image is present
  *
- * Checks four conditions (all must pass):
+ * Checks three conditions (all must pass):
  *   1. Initial SP points into RAM (0x20000000–0x20005000)
  *   2. Reset vector (PC) is within the App flash range
  *   3. Cortex-M3 thumb mode (PC bit 0 = 1)
- *   4. Image header magic word 0xCAFEBABE at offset 0x200
+ *
+ * No magic number check — any firmware with a valid vector table
+ * at APP_BASE will boot.
  *
  * @return: true if the app image passes all checks
  */
@@ -117,11 +119,6 @@ static bool boot_validate_app(void)
 
     /* Cortex-M3 requires thumb mode (bit 0 = 1) */
     if ((pc & 1) == 0)
-        return false;
-
-    /* Image header magic at offset APP_HEADER_OFFSET */
-    u32 *hdr = (u32 *)(APP_BASE + APP_HEADER_OFFSET);
-    if (hdr[0] != APP_HEADER_MAGIC)
         return false;
 
     return true;

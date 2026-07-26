@@ -37,7 +37,7 @@ STM32 GND      ──── USB-TTL GND
 上电
   │
   ├─ Bootloader 初始化 (USART2 + Flash 驱动)
-  ├─ 校验 App (SP / PC 范围 / thumb bit / 魔数 0xCAFEBABE @ 0x200)
+  ├─ 校验 App (SP 在 RAM / PC 在 Flash / thumb bit)
   │
   ├─ App 无效 → 进入 OTA 模式
   │
@@ -144,12 +144,11 @@ MEMORY {
 }
 SECTIONS {
     .isr_vector : { ... } >FLASH
-    .image_header 0x08004200 : {
-        LONG(0xCAFEBABE);  /* bootloader 校验魔数 */
-    } >FLASH
     .text : { ... } >FLASH
 }
 ```
+
+不再需要 `.image_header` 和 `0xCAFEBABE` 魔数。
 
 ### 2. main() — 正常用 CubeMX 代码
 
@@ -167,8 +166,9 @@ bootloader 跳转前已切回 HSI 8MHz，App 从干净状态启动，`SystemCloc
 | 规则 | 原因 |
 |------|------|
 | `FLASH = 0x08004000, 48K` | bootloader 占 0x0000-0x3FFF |
-| `.image_header + 0xCAFEBABE` | 魔数校验，无则不启动 |
 | `SystemClock_Config()` 正常调用 | 跳转前已复位 RCC，App 冷启动 |
+
+不再要求 `.image_header` 段和 `0xCAFEBABE` 魔数 —— 只要向量表合规（SP 在 RAM、PC 在 Flash、thumb bit=1）就能启动。
 
 ## 分支
 
