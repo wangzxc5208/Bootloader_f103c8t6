@@ -359,7 +359,16 @@ function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
    ═══════════════════════════════════════════════════════════════════ */
 function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
 
-async function sendFrame(cmd,data=new Uint8Array(0)){const f=buildFrame(cmd,data),w=port.writable.getWriter();try{await w.write(f)}finally{w.releaseLock()}}
+async function sendFrame(cmd,data=new Uint8Array(0)){
+  const f=buildFrame(cmd,data);
+  if(!port||!port.writable)return;
+  const w=port.writable.getWriter();
+  try{await w.write(f)}finally{
+    try{w.releaseLock()}catch(e){}
+  }
+  // At 9600 baud, 1 byte ≈ 1ms.  Give the MCU time to receive before we read.
+  await sleep(30);
+}
 
 /* recvFrame — collect bytes into a ring buffer, then parse.
    reader.read() may return many bytes at once; we must not lose
