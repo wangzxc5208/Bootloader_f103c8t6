@@ -104,15 +104,25 @@ cmake --build build/Release
 
 ## OTA 工具
 
-### GUI 工具 (推荐)
+### Web 工具 (推荐)
+
+**零依赖**，用 Chrome/Edge 浏览器打开 `tools/ota_web.html` 即可使用：
+
+```
+双击 tools/ota_web.html 或用浏览器打开
+```
+
+- 点击 **🔄** 授权串口 → 选 COM 口 + 波特率 **9600** → 点「连接」
+- 拖拽 .bin 文件，填版本号 → 点「开始升级」
+- 支持拖放固件文件，实时进度条，自动 CRC 校验
+
+> 需要 Chrome 89+ / Edge 89+（基于 Web Serial API）。不支持 Firefox/Safari。
+
+### Python GUI 工具
 ```bash
 pip install pyserial
 python tools/ota_gui.py
 ```
-1. 选串口 COMx，波特率 **9600**
-2. 浏览固件 .bin 文件
-3. 填版本号 (如 1.0.0)
-4. 点「开始升级」
 
 ### 命令行工具
 ```bash

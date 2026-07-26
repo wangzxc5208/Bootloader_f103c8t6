@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STM32F103 OTA 固件升级</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --card: #181b22;
+  --border: #252830;
+  --text: #d4d4d8;
+  --dim: #71717a;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --fail: #ef4444;
+  --log-bg: #0c0e14;
+  --radius: 8px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, "Microsoft YaHei", sans-serif;
+  background: var(--bg); color: var(--text);
+  display: flex; justify-content: center; padding: 24px 16px;
+  min-height: 100vh;
+}
+.container { width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 14px; }
+
+h1 { font-size: 20px; font-weight: 700; text-align: center; margin-bottom: 4px; letter-spacing: 0.5px; }
+.sub { text-align: center; color: var(--dim); font-size: 13px; margin-bottom: 6px; }
+
+.card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px;
+}
+.card-title { font-size: 13px; font-weight: 600; margin-bottom: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.8px; }
+
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row > * { flex-shrink: 0; }
+.spacer { flex: 1; }
+
+select, input, button {
+  font-family: inherit; font-size: 14px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 7px 10px; outline: none;
+}
+select:focus, input:focus { border-color: var(--accent); }
+select { cursor: pointer; }
+
+.btn {
+  cursor: pointer; font-weight: 600; border: none;
+  padding: 8px 16px; border-radius: 6px; transition: all 0.15s;
+  display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+}
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:disabled { background: #1e3a5f; color: #64748b; cursor: not-allowed; }
+.btn-outline { background: transparent; border: 1px solid var(--border); }
+.btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+.btn-ok { background: #166534; color: var(--ok); border: 1px solid #166534; }
+.btn-ok:hover { background: #1a6e3a; }
+.btn-danger { background: #7f1d1d; color: #fca5a5; border: 1px solid #7f1d1d; }
+.btn-danger:hover { background: #8b2020; }
+
+.file-area {
+  border: 2px dashed var(--border); border-radius: var(--radius);
+  padding: 18px; text-align: center; cursor: pointer; transition: border-color 0.15s;
+  color: var(--dim); font-size: 13px;
+}
+.file-area:hover, .file-area.drag-over { border-color: var(--accent); color: var(--accent); }
+.file-area .name { color: var(--text); font-weight: 600; margin-top: 4px; }
+
+.ver { display: flex; gap: 4px; align-items: center; }
+.ver input { width: 52px; text-align: center; }
+.ver span { color: var(--dim); font-weight: bold; }
+
+.progress-wrap { position: relative; height: 10px; background: var(--bg); border-radius: 5px; overflow: hidden; margin: 4px 0; }
+.progress-bar { height: 100%; background: var(--accent); border-radius: 5px; width: 0%; transition: width 0.15s; }
+.progress-text { font-size: 12px; color: var(--dim); margin-top: 4px; }
+
+.log {
+  background: var(--log-bg); border-radius: var(--radius);
+  height: 200px; overflow-y: auto; padding: 10px 12px;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+}
+.log .ok { color: var(--ok); }
+.log .fail { color: var(--fail); }
+.log .warn { color: var(--warn); }
+.log .dim { color: var(--dim); }
+
+.footer { text-align: center; color: var(--dim); font-size: 11px; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #fff3; border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>STM32F103 OTA 固件升级</h1>
+  <p class="sub">Web Serial API &middot; 需 Chrome/Edge 浏览器</p>
+
+  <!-- Connection -->
+  <div class="card">
+    <div class="card-title">串口连接</div>
+    <div class="row">
+      <button class="btn btn-outline btn-sm" onclick="refreshPorts()" id="btnRefresh" disabled>🔄</button>
+      <select id="selPort" style="flex:1; min-width:140px;"><option value="">— 选择串口 —</option></select>
+      <select id="selBaud" style="width:100px;">
+        <option value="9600" selected>9600</option>
+        <option value="19200">19200</option>
+        <option value="57600">57600</option>
+        <option value="115200">115200</option>
+      </select>
+      <button class="btn btn-outline" id="btnConnect" onclick="toggleConnect()" disabled>连接</button>
+    </div>
+  </div>
+
+  <!-- Firmware -->
+  <div class="card">
+    <div class="card-title">固件信息</div>
+    <div class="file-area" id="fileArea" onclick="pickFile()">
+      📂 点击选择固件 .bin 文件
+      <div class="name" id="fileName">—</div>
+    </div>
+    <input type="file" id="fileInput" accept=".bin" style="display:none" onchange="onFilePicked(event)">
+    <div class="row" style="margin-top:10px;">
+      <span style="font-size:13px;color:var(--dim)">版本:</span>
+      <div class="ver">
+        <input id="vMajor" value="1" maxlength="4"><span>.</span>
+        <input id="vMinor" value="0" maxlength="4"><span>.</span>
+        <input id="vPatch" value="0" maxlength="4">
+      </div>
+      <span style="font-size:13px;color:var(--dim);margin-left:12px;">大小:</span>
+      <span id="fileSize" style="font-size:13px;color:var(--dim)">—</span>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="card">
+    <div class="card-title">升级进度</div>
+    <div class="progress-wrap"><div class="progress-bar" id="progBar"></div></div>
+    <div class="progress-text" id="progText">就绪</div>
+  </div>
+
+  <!-- Log -->
+  <div class="card">
+    <div class="card-title">日志</div>
+    <div class="log" id="log"></div>
+  </div>
+
+  <!-- Actions -->
+  <div class="row" style="justify-content: center; gap: 10px;">
+    <button class="btn btn-outline" id="btnPing" onclick="doPing()" disabled>📡 Ping</button>
+    <button class="btn btn-primary" id="btnStart" onclick="doUpdate()" disabled>⬆ 开始升级</button>
+    <button class="btn btn-danger btn-sm" id="btnReset" onclick="doReset()" disabled>↺ 复位</button>
+  </div>
+
+  <p class="footer">bootloader 上电后 3 秒内为 OTA 窗口 &middot; 升级完成后自动复位</p>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// Protocol constants
+// ═══════════════════════════════════════════════════════════════════
+const SYNC0 = 0xAA, SYNC1 = 0x55, MAX_PAYLOAD = 1024;
+const CMD_PING = 0x01, CMD_START_OTA = 0x02, CMD_SEND_DATA = 0x03;
+const CMD_VERIFY = 0x04, CMD_ACTIVATE = 0x05, CMD_GET_STATUS = 0x06;
+const CMD_GET_VERSION = 0x07, CMD_RESET = 0x08;
+const RESP_ACK = 0x80, RESP_NACK = 0x81, RESP_STATUS = 0x82, RESP_VERSION = 0x83;
+
+const CRC16_TABLE = [
+  0x0000,0x1021,0x2042,0x3063,0x4084,0x50A5,0x60C6,0x70E7,
+  0x8108,0x9129,0xA14A,0xB16B,0xC18C,0xD1AD,0xE1CE,0xF1EF,
+  0x1231,0x0210,0x3273,0x2252,0x52B5,0x4294,0x72F7,0x62D6,
+  0x9339,0x8318,0xB37B,0xA35A,0xD3BD,0xC39C,0xF3FF,0xE3DE,
+  0x2462,0x3443,0x0420,0x1401,0x64E6,0x74C7,0x44A4,0x5485,
+  0xA56A,0xB54B,0x8528,0x9509,0xE5EE,0xF5CF,0xC5AC,0xD58D,
+  0x3653,0x2672,0x1611,0x0630,0x76D7,0x66F6,0x5695,0x46B4,
+  0xB75B,0xA77A,0x9719,0x8738,0xF7DF,0xE7FE,0xD79D,0xC7BC,
+  0x48C4,0x58E5,0x6886,0x78A7,0x0840,0x1861,0x2802,0x3823,
+  0xC9CC,0xD9ED,0xE98E,0xF9AF,0x8948,0x9969,0xA90A,0xB92B,
+  0x5AF5,0x4AD4,0x7AB7,0x6A96,0x1A71,0x0A50,0x3A33,0x2A12,
+  0xDBFD,0xCBDC,0xFBBF,0xEB9E,0x9B79,0x8B58,0xBB3B,0xAB1A,
+  0x6CA6,0x7C87,0x4CE4,0x5CC5,0x2C22,0x3C03,0x0C60,0x1C41,
+  0xEDAE,0xFD8F,0xCDEC,0xDDCD,0xAD2A,0xBD0B,0x8D68,0x9D49,
+  0x7E97,0x6EB6,0x5ED5,0x4EF4,0x3E13,0x2E32,0x1E51,0x0E70,
+  0xFF9F,0xEFBE,0xDFDD,0xCFFC,0xBF1B,0xAF3A,0x9F59,0x8F78,
+  0x9188,0x81A9,0xB1CA,0xA1EB,0xD10C,0xC12D,0xF14E,0xE16F,
+  0x1080,0x00A1,0x30C2,0x20E3,0x5004,0x4025,0x7046,0x6067,
+  0x83B9,0x9398,0xA3FB,0xB3DA,0xC33D,0xD31C,0xE37F,0xF35E,
+  0x02B1,0x1290,0x22F3,0x32D2,0x4235,0x5214,0x6277,0x7256,
+  0xB5EA,0xA5CB,0x95A8,0x8589,0xF56E,0xE54F,0xD52C,0xC50D,
+  0x34E2,0x24C3,0x14A0,0x0481,0x7466,0x6447,0x5424,0x4405,
+  0xA7DB,0xB7FA,0x8799,0x97B8,0xE75F,0xF77E,0xC71D,0xD73C,
+  0x26D3,0x36F2,0x0691,0x16B0,0x6657,0x7676,0x4615,0x5634,
+  0xD94C,0xC96D,0xF90E,0xE92F,0x99C8,0x89E9,0xB98A,0xA9AB,
+  0x5844,0x4865,0x7806,0x6827,0x18C0,0x08E1,0x3882,0x28A3,
+  0xCB7D,0xDB5C,0xEB3F,0xFB1E,0x8BF9,0x9BD8,0xABBB,0xBB9A,
+  0x4A75,0x5A54,0x6A37,0x7A16,0x0AF1,0x1AD0,0x2AB3,0x3A92,
+  0xFD2E,0xED0F,0xDD6C,0xCD4D,0xBDAA,0xAD8B,0x9DE8,0x8DC9,
+  0x7C26,0x6C07,0x5C64,0x4C45,0x3CA2,0x2C83,0x1CE0,0x0CC1,
+  0xEF1F,0xFF3E,0xCF5D,0xDF7C,0xAF9B,0xBFBA,0x8FD9,0x9FF8,
+  0x6E17,0x7E36,0x4E55,0x5E74,0x2E93,0x3EB2,0x0ED1,0x1EF0,
+];
+
+function crc16(data, crc = 0) {
+  for (let b of data) crc = ((crc << 8) ^ CRC16_TABLE[((crc >> 8) ^ b) & 0xFF]) & 0xFFFF;
+  return crc;
+}
+
+function buildFrame(cmd, data = new Uint8Array(0)) {
+  const len = data.length;
+  const buf = new Uint8Array(5 + len + 2);
+  buf[0] = SYNC0; buf[1] = SYNC1; buf[2] = cmd;
+  buf[3] = (len >> 8) & 0xFF; buf[4] = len & 0xFF;
+  for (let i = 0; i < len; i++) buf[5 + i] = data[i];
+  const crcVal = crc16(buf.slice(2, 5 + len));
+  buf[5 + len] = (crcVal >> 8) & 0xFF;
+  buf[6 + len] = crcVal & 0xFF;
+  return buf;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Global state
+// ═══════════════════════════════════════════════════════════════════
+let port = null;
+let firmware = null;
+let updating = false;
+
+// ═══════════════════════════════════════════════════════════════════
+// UI helpers
+// ═══════════════════════════════════════════════════════════════════
+const $ = id => document.getElementById(id);
+const logEl = $('log');
+
+function log(msg, cls = '') {
+  const span = document.createElement('span');
+  span.className = cls;
+  span.textContent = msg;
+  logEl.appendChild(span);
+  logEl.appendChild(document.createTextNode('\n'));
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setProgress(pct, text) {
+  $('progBar').style.width = pct + '%';
+  if (text) $('progText').textContent = text;
+}
+
+function setButtons() {
+  const connected = !!(port && port.readable);
+  $('btnConnect').textContent = connected ? '断开' : '连接';
+  $('btnConnect').className = connected ? 'btn btn-ok' : 'btn btn-outline';
+  $('btnPing').disabled = !connected;
+  $('btnStart').disabled = !connected || !firmware;
+  $('btnReset').disabled = !connected;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Serial port
+// ═══════════════════════════════════════════════════════════════════
+
+async function refreshPorts() {
+  $('selPort').innerHTML = '<option value="">— 选择串口 —</option>';
+  try {
+    const ports = await navigator.serial.getPorts();
+    for (const p of ports) {
+      const opt = document.createElement('option');
+      opt.value = ports.indexOf(p);
+      const info = p.getInfo && p.getInfo();
+      opt.textContent = (info && info.usbProductName) || `COM 端口 #${ports.indexOf(p) + 1}`;
+      $('selPort').appendChild(opt);
+    }
+    log(`[系统] 发现 ${ports.length} 个已授权串口`, 'dim');
+  } catch (e) {
+    log(`[系统] 获取串口失败: ${e}`, 'fail');
+  }
+}
+
+async function requestPort() {
+  try {
+    const p = await navigator.serial.requestPort();
+    await refreshPorts();
+    // Select the last one (newly added)
+    $('selPort').selectedIndex = $('selPort').options.length - 1;
+    return p;
+  } catch (e) {
+    if (e.name !== 'AbortError') log(`[系统] 请求串口失败: ${e}`, 'fail');
+    return null;
+  }
+}
+
+async function toggleConnect() {
+  if (port && port.readable) {
+    // Disconnect
+    try { await port.close(); } catch (e) {}
+    port = null;
+    log('[系统] 已断开连接', 'dim');
+    setButtons();
+    return;
+  }
+  // Connect
+  let idx = parseInt($('selPort').value);
+  let selectedPort = null;
+  try {
+    const ports = await navigator.serial.getPorts();
+    if (isNaN(idx) || idx >= ports.length || idx < 0) {
+      // No port selected — ask user
+      selectedPort = await requestPort();
+      if (!selectedPort) return;
+    } else {
+      selectedPort = ports[idx];
+    }
+  } catch (e) {
+    selectedPort = await requestPort();
+    if (!selectedPort) return;
+  }
+
+  const baud = parseInt($('selBaud').value);
+  try {
+    await selectedPort.open({ baudRate: baud, dataBits: 8, stopBits: 1, parity: 'none' });
+    port = selectedPort;
+    log(`[系统] 已连接 @ ${baud} baud`, 'ok');
+    setButtons();
+
+    // Auto-ping
+    log('[→] 检测 Bootloader...', 'dim');
+    await sleep(200);
+    const ok = await ping();
+    if (ok) {
+      log('[✓] Bootloader 在线', 'ok');
+      try { await getVersion(); } catch (e) {}
+    } else {
+      log('[⚠] 未检测到 Bootloader — 请复位设备进入 OTA 窗口', 'warn');
+    }
+  } catch (e) {
+    log(`[系统] 连接失败: ${e}`, 'fail');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Protocol I/O
+// ═══════════════════════════════════════════════════════════════════
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function sendFrame(cmd, data = new Uint8Array(0)) {
+  const frame = buildFrame(cmd, data);
+  const writer = port.writable.getWriter();
+  try {
+    await writer.write(frame);
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+async function recvFrame(timeoutMs = 3000) {
+  if (!port || !port.readable) return null;
+  const reader = port.readable.getReader();
+  const t0 = Date.now();
+  let buf = [];
+  try {
+    // Phase 1: find sync
+    while (Date.now() - t0 < timeoutMs) {
+      try {
+        const { value, done } = await reader.read();
+        if (done) return null;
+        for (let b of value) {
+          if (buf.length === 0 && b === SYNC0) {
+            buf.push(b);
+          } else if (buf.length === 1) {
+            if (b === SYNC1) { buf.push(b); break; }
+            else if (b === SYNC0) buf = [b];
+            else buf = [];
+          }
+        }
+        if (buf.length === 2) break; // Got sync
+      } catch (e) { break; }
+    }
+    if (buf.length !== 2) return null;
+
+    // Phase 2: read header (3 bytes)
+    const hdr = await readBytes(reader, 3, timeoutMs - (Date.now() - t0));
+    if (!hdr || hdr.length < 3) return null;
+    buf.push(...hdr);
+    const cmd = hdr[0];
+    const plen = (hdr[1] << 8) | hdr[2];
+
+    // Phase 3: read payload + CRC
+    const tail = await readBytes(reader, plen + 2, timeoutMs - (Date.now() - t0));
+    if (!tail || tail.length < plen + 2) return null;
+    buf.push(...tail);
+
+    // Verify CRC
+    const crcRx = (buf[buf.length - 2] << 8) | buf[buf.length - 1];
+    const payload = buf.slice(5, 5 + plen);
+    const crcCalc = crc16(buf.slice(2, 5 + plen));
+    if (crcCalc !== crcRx) return null;
+
+    return { cmd, payload: new Uint8Array(payload) };
+  } finally {
+    try { reader.releaseLock(); } catch (e) {}
+  }
+}
+
+async function readBytes(reader, count, timeoutMs) {
+  const result = [];
+  const t0 = Date.now();
+  while (result.length < count && Date.now() - t0 < timeoutMs) {
+    try {
+      const { value, done } = await reader.read();
+      if (done) break;
+      for (let b of value) { result.push(b); if (result.length >= count) break; }
+    } catch (e) { break; }
+  }
+  return result;
+}
+
+async function sendCmd(cmd, data, expectAck = true) {
+  await sendFrame(cmd, data);
+  if (!expectAck) return true;
+  const r = await recvFrame(3000);
+  return r && r.cmd === RESP_ACK;
+}
+
+async function ping() {
+  await sendFrame(CMD_PING, new Uint8Array(0));
+  const r = await recvFrame(1500);
+  return r && r.cmd === RESP_ACK;
+}
+
+async function getVersion() {
+  await sendFrame(CMD_GET_VERSION, new Uint8Array(0));
+  const r = await recvFrame(2000);
+  if (r && r.cmd === RESP_VERSION && r.payload.length >= 12) {
+    const dv = new DataView(r.payload.buffer);
+    const pv = dv.getUint16(0, false);
+    const bmaj = dv.getUint16(2, false);
+    const bmin = dv.getUint16(4, false);
+    const bpat = dv.getUint16(6, false);
+    log(`[✓] Bootloader v${bmaj}.${bmin}.${bpat}  协议 v${pv>>8}.${pv&0xFF}`, 'ok');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// File handling
+// ═══════════════════════════════════════════════════════════════════
+
+function pickFile() { $('fileInput').click(); }
+
+function onFilePicked(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  $('fileName').textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = () => {
+    firmware = new Uint8Array(reader.result);
+    const sz = firmware.length;
+    $('fileSize').textContent = `${sz.toLocaleString()} 字节 (${(sz/1024).toFixed(1)} KB)`;
+    if (sz > 48 * 1024) {
+      log(`[⚠] 固件 ${sz} 字节超过 48KB 分区限制`, 'warn');
+    } else {
+      log(`[✓] 加载固件: ${file.name} (${sz} 字节)`, 'ok');
+    }
+    if (file.name.endsWith('.bin')) {
+      // Try to guess version from filename: xxx_v1_2_3.bin
+      const m = file.name.match(/v?(\d+)[._](\d+)[._](\d+)/);
+      if (m) { $('vMajor').value = m[1]; $('vMinor').value = m[2]; $('vPatch').value = m[3]; }
+    }
+    setButtons();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// Drag & drop
+const fileArea = $('fileArea');
+fileArea.addEventListener('dragover', e => { e.preventDefault(); fileArea.classList.add('drag-over'); });
+fileArea.addEventListener('dragleave', () => fileArea.classList.remove('drag-over'));
+fileArea.addEventListener('drop', e => {
+  e.preventDefault();
+  fileArea.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) {
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    $('fileInput').files = dt.files;
+    onFilePicked({ target: $('fileInput') });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// OTA workflow
+// ═══════════════════════════════════════════════════════════════════
+
+async function doUpdate() {
+  if (updating || !firmware || !port) return;
+  updating = true;
+  $('btnStart').disabled = true;
+  $('btnStart').innerHTML = '<span class="spinner"></span> 升级中...';
+  logEl.innerHTML = '';
+  setProgress(0, '准备中...');
+
+  try {
+    const fw = firmware;
+    const major = parseInt($('vMajor').value) || 0;
+    const minor = parseInt($('vMinor').value) || 0;
+    const patch = parseInt($('vPatch').value) || 0;
+
+    // 1. Ping
+    log('[→] 检测 Bootloader...', 'dim');
+    if (!await ping()) {
+      log('[✗] Bootloader 无响应 — 请复位设备进入 OTA 窗口', 'fail');
+      return;
+    }
+    log('[✓] Bootloader 在线', 'ok');
+
+    // 2. Get version
+    log('[→] 获取版本信息...', 'dim');
+    await getVersion();
+
+    // 3. START_OTA
+    log(`[→] 开始 OTA: v${major}.${minor}.${patch}, ${fw.length} 字节`, 'dim');
+    setProgress(0, '开始升级...');
+    const startPayload = new Uint8Array(12);
+    const dvStart = new DataView(startPayload.buffer);
+    dvStart.setUint32(0, fw.length, false); // image_size (BE)
+    dvStart.setUint16(4, major, false);
+    dvStart.setUint16(6, minor, false);
+    dvStart.setUint16(8, patch, false);
+
+    if (!await sendCmd(CMD_START_OTA, startPayload)) {
+      log('[✗] START_OTA 失败 — 固件可能超出分区大小', 'fail');
+      return;
+    }
+    log('[✓] 设备已准备接收', 'ok');
+
+    // 4. SEND_DATA
+    log(`[→] 发送固件 (${fw.length} 字节)...`, 'dim');
+    const chunkSize = MAX_PAYLOAD - 4;
+    let offset = 0;
+    let errors = 0;
+
+    while (offset < fw.length) {
+      const end = Math.min(offset + chunkSize, fw.length);
+      const chunk = fw.slice(offset, end);
+      const payload = new Uint8Array(4 + chunk.length);
+      const dv = new DataView(payload.buffer);
+      dv.setUint32(0, offset, false); // offset (BE)
+      payload.set(chunk, 4);
+
+      const ok = await sendCmd(CMD_SEND_DATA, payload);
+      if (ok) {
+        offset = end;
+        const pct = Math.round(offset * 100 / fw.length);
+        setProgress(pct, `发送中... ${pct}% (${offset.toLocaleString()}/${fw.length.toLocaleString()})`);
+        errors = 0;
+      } else {
+        errors++;
+        if (errors > 3) {
+          log(`[✗] 发送失败 @ offset=${offset}`, 'fail');
+          return;
+        }
+        log(`  [↻] 重试 offset=${offset}...`, 'warn');
+        await sleep(200);
+      }
+    }
+    log(`[✓] 固件发送完成 (${offset.toLocaleString()} 字节)`, 'ok');
+
+    // 5. VERIFY
+    log('[→] 校验固件 CRC...', 'dim');
+    setProgress(95, '校验中...');
+    if (!await sendCmd(CMD_VERIFY, new Uint8Array(0))) {
+      log('[✗] CRC 校验失败', 'fail');
+      setProgress(0, '校验失败');
+      return;
+    }
+    log('[✓] CRC 校验通过', 'ok');
+
+    // 6. ACTIVATE
+    log('[→] 激活新固件...', 'dim');
+    setProgress(100, '激活中...');
+    await sendFrame(CMD_ACTIVATE, new Uint8Array(0));
+    await sleep(300);
+
+    log('');
+    log('═'.repeat(44), 'ok');
+    log(`  ✓ 升级完成！设备正在重启...`, 'ok');
+    log(`  新版本: v${major}.${minor}.${patch}`, 'ok');
+    log('═'.repeat(44), 'ok');
+    setProgress(100, '完成 ✓');
+
+  } catch (e) {
+    log(`[✗] 异常: ${e}`, 'fail');
+  } finally {
+    updating = false;
+    $('btnStart').innerHTML = '⬆ 开始升级';
+    setButtons();
+  }
+}
+
+async function doPing() {
+  if (!port) return;
+  log('[→] Ping...', 'dim');
+  const ok = await ping();
+  log(ok ? '[✓] Pong!' : '[✗] 无响应', ok ? 'ok' : 'fail');
+}
+
+async function doReset() {
+  if (!port) return;
+  log('[→] 发送复位命令...', 'dim');
+  await sendFrame(CMD_RESET, new Uint8Array(0));
+  log('[✓] 设备应已复位', 'ok');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════════════════════════════
+
+async function init() {
+  if (!('serial' in navigator)) {
+    log('[✗] 浏览器不支持 Web Serial API', 'fail');
+    log('  请使用 Chrome 89+ 或 Edge 89+', 'dim');
+    log('  地址栏输入 chrome://flags 搜索 "Experimental Web Platform features" 并启用', 'dim');
+    return;
+  }
+  $('btnRefresh').disabled = false;
+  $('btnConnect').disabled = false;
+  await refreshPorts();
+
+  // Listen for serial port connections/disconnections
+  navigator.serial.addEventListener('connect', () => { refreshPorts(); log('[系统] 检测到新串口', 'dim'); });
+  navigator.serial.addEventListener('disconnect', () => {
+    log('[系统] 串口已断开', 'warn');
+    port = null;
+    setButtons();
+  });
+}
+
+init();
+</script>
+</body>
+</html>
