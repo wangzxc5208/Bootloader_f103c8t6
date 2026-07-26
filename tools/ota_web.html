@@ -332,7 +332,9 @@ async function toggleConnect(){
   try{await sp.close()}catch(e){}
   const baud=parseInt($('selBaud').value);
   try{
-    await sp.open({baudRate:baud,dataBits:8,stopBits:1,parity:'none'});
+    await sp.open({baudRate:baud,dataBits:8,stopBits:1,parity:'none',flowControl:'none'});
+    // Some USB-TTL chips (CH340, CP2102) require DTR to be asserted
+    try{await sp.setSignals({dataTerminalReady:true,requestToSend:false})}catch(e){}
   }catch(openErr){
     // Common causes: port in use by another app, stale handle, driver issue
     log(`打开串口失败: ${openErr.message||openErr}`,'fail');
@@ -346,6 +348,8 @@ async function toggleConnect(){
     return;
   }
   port=sp;
+  // Let USB-UART settle; ring buffer in recvFrame handles any noise
+  await sleep(200);
   try{portReader=port.readable.getReader()}catch(e){log('创建 reader 失败: '+e,'fail');return}
   log(`已连接 @ ${baud} baud`,'ok');setButtons();setDeviceStatus(true);await detectOnce()
 }
