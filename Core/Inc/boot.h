@@ -71,7 +71,7 @@
 
 /* ── Application image header ────────────────────────────────────── */
 
-#define APP_HEADER_OFFSET   0x100U              /* Offset past vector table */
+#define APP_HEADER_OFFSET   0x200U              /* Offset past vector table (max ~400B) */
 #define APP_HEADER_MAGIC    0xCAFEBABEU         /* Image valid marker */
 #define APP_MAX_SIZE        SLOT_A_SIZE         /* Max app image size */
 
