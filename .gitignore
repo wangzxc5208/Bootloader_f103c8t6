@@ -1,0 +1,39 @@
+# Build output
+build/
+cmake-build-*/
+out/
+*.elf
+*.hex
+*.bin
+*.map
+*.o
+*.a
+*.su
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env/
+venv/
+
+# Misc
+*.log
+*.tmp
